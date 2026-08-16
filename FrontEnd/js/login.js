@@ -16,7 +16,9 @@
   }
 
   // 已登录则直接进入主界面。
-  api('/admin/me')
+  // redirectOn401: false —— 本页即登录页，未登录（401）应停留本页而非再次跳转，
+  // 否则会形成「401 → 跳 /login.html → 重载 → 再探测 → 401」的死循环。
+  api('/admin/me', { redirectOn401: false })
     .then(() => { location.href = '/index.html'; })
     .catch(() => { /* 未登录：停留登录页 */ });
 

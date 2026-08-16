@@ -9,8 +9,13 @@ const CODE_SESSION_EXPIRED = 20103;
 /**
  * 统一 API 请求封装。
  * 成功返回 data 字段；失败抛 Error（附 code）；401/20103 跳转登录页。
+ * @param {string} path 接口路径（不含 /api/v1 前缀）
+ * @param {object} [options]
+ * @param {boolean} [options.redirectOn401=true] 401/20103 时是否跳转登录页。
+ *   登录页自身的会话探测（如 login.js 的 GET /admin/me）应传 false，
+ *   避免「401 → 跳 /login.html → 重载 → 再探测 → 401」的自跳转死循环。
  */
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body, redirectOn401 = true } = {}) {
   const res = await fetch('/api/v1' + path, {
     method,
     credentials: 'same-origin',
@@ -24,7 +29,10 @@ async function api(path, { method = 'GET', body } = {}) {
   const json = await res.json().catch(() => ({ code: 50000, message: '响应解析失败' }));
 
   if (res.status === 401 || json.code === CODE_SESSION_EXPIRED) {
-    location.href = '/login.html';
+    // 已在登录页时不重复导航（兜底，防止其它路径在登录页误触发全局跳转）。
+    if (redirectOn401 && !/\/login\.html$/.test(location.pathname)) {
+      location.href = '/login.html';
+    }
     throw new Error('会话过期，请重新登录');
   }
   if (json.code !== 0) {
