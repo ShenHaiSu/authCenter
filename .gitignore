@@ -36,7 +36,8 @@ Bundle/linux/*
 BackEnd/internal/web/*
 !BackEnd/internal/web/.gitkeep
 # 本地直接编译出的后端二进制（脚本产物统一输出到 Bundle/）
-authcenter
+# 注意：不能写裸 "authcenter"，否则会误忽略 cmd/authcenter/ 源码目录
+/authcenter
 authcenter.exe
 
 # ---------- Go 测试 / 分析产物 ----------
