@@ -1,0 +1,30 @@
+# ============================================================================
+# authcenter.service — AuthCenter systemd 单元示例（后端架构文档 07 §5.2）
+#
+# 安装：
+#   sudo cp authcenter.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now authcenter
+#
+# 查看日志（含首次启动的 admin 初始密码，见 data/auth.log）：
+#   journalctl -u authcenter -f
+# ============================================================================
+[Unit]
+Description=AuthCenter Authentication Service
+After=network.target
+
+[Service]
+Type=simple
+User=authcenter
+WorkingDirectory=/opt/authcenter
+ExecStart=/opt/authcenter/authcenter -data-dir /opt/authcenter/data
+Restart=on-failure
+RestartSec=3
+# 安全加固（文档 06 §8 / 07 §5.2）
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
