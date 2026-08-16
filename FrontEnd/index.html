@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AuthCenter 管理界面</title>
+  <link rel="stylesheet" href="/css/base.css">
+</head>
+<body>
+  <div class="layout">
+    <!-- 左侧导航（02 §2） -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        AuthCenter
+        <small>中心认证服务</small>
+      </div>
+      <nav class="sidebar-nav">
+        <a data-view="dashboard" class="active"><span class="nav-icon">📊</span><span class="nav-label">仪表盘</span></a>
+        <a data-view="projects"><span class="nav-icon">🗂️</span><span class="nav-label">项目</span></a>
+        <a data-view="audit"><span class="nav-icon">📋</span><span class="nav-label">审计日志</span></a>
+        <a data-view="password"><span class="nav-icon">🔑</span><span class="nav-label">修改密码</span></a>
+        <a data-view="guide"><span class="nav-icon">📖</span><span class="nav-label">使用教程</span></a>
+        <a data-view="docs"><span class="nav-icon">🔌</span><span class="nav-label">对接文档</span></a>
+      </nav>
+      <div class="sidebar-footer" id="sidebar-user">—</div>
+    </aside>
+
+    <!-- 右侧内容区 -->
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-title" id="topbar-title">仪表盘</div>
+        <div class="topbar-user">
+          <span id="current-user">—</span>
+          <button id="logout-btn" class="btn btn-sm">登出</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <!-- 仪表盘 -->
+        <section id="view-dashboard" class="view active">
+          <div id="dashboard-root"></div>
+        </section>
+
+        <!-- 项目 -->
+        <section id="view-projects" class="view">
+          <div id="projects-root"></div>
+        </section>
+
+        <!-- 密钥 -->
+        <section id="view-keys" class="view">
+          <div id="keys-root"></div>
+        </section>
+
+        <!-- 审计日志 -->
+        <section id="view-audit" class="view">
+          <div id="audit-root"></div>
+        </section>
+
+        <!-- 修改密码 -->
+        <section id="view-password" class="view">
+          <div id="password-root"></div>
+        </section>
+
+        <!-- 使用教程（新界面设计 01） -->
+        <section id="view-guide" class="view">
+          <div id="guide-root"></div>
+        </section>
+
+        <!-- 对接文档（新界面设计 02） -->
+        <section id="view-docs" class="view">
+          <div id="docs-root"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- 全局二次确认模态框（02 §7 危险操作） -->
+  <div id="confirm-modal" class="modal-mask" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>操作确认</h3>
+        <button type="button" class="modal-close" data-close>×</button>
+      </div>
+      <div id="confirm-message" style="font-size:14px;line-height:1.7;"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" id="confirm-ok" class="btn btn-danger">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 密钥明文展示模态框（02 §5：仅显示一次，关闭即清空） -->
+  <div id="key-reveal-modal" class="modal-mask" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>密钥已生成</h3>
+        <button type="button" class="modal-close" data-close>×</button>
+      </div>
+      <div class="key-warning">⚠ 明文仅显示一次，关闭后不可再次查看，请立即复制保存！</div>
+      <div id="key-reveal-value" class="key-value-box"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="key-reveal-copy">复制密钥</button>
+        <button type="button" class="btn" data-close>我已保存，关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/dashboard.js"></script>
+  <script src="/js/projects.js"></script>
+  <script src="/js/keys.js"></script>
+  <script src="/js/audit.js"></script>
+  <script src="/js/guide.js"></script>
+  <script src="/js/docs.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
