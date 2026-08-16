@@ -1,6 +1,5 @@
 // Package model 定义领域结构体（后端架构文档 04 §1）。
-// M1 阶段仅需要 admin 与会话、settings 相关结构体；
-// project/api_key/audit_log 的结构体随 M2/M3 逐步补齐。
+// M1：admin/settings/audit 基础结构体；M2：Project/APIKey 补全。
 package model
 
 import "time"
@@ -28,6 +27,35 @@ type AdminSession struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// Project 项目（表 project，见文档 03 §2.3）。
+type Project struct {
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`            // 项目名（外部认证标识，UNIQUE）
+	Description    string    `json:"description"`     //
+	CurrentVersion string    `json:"current_version"` // 当前维护版本
+	MinVersion     *string   `json:"min_version"`     // 可选最低版本，NULL=不限制
+	IsActive       bool      `json:"is_active"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	KeyCount       int       `json:"key_count,omitempty"` // 列表查询附带，非表字段
+}
+
+// APIKey 项目密钥（表 api_key，见文档 03 §2.4）。
+// KeyValue 永不出现在任何列表/详情响应（05 §4.3），仅创建/轮换响应返回一次明文。
+type APIKey struct {
+	ID          int64      `json:"id"`
+	ProjectID   int64      `json:"project_id"`
+	Name        string     `json:"name"`        // 备注/用途
+	KeyValue    string     `json:"-"`           // 密钥明文，响应中永不输出
+	Fingerprint *string    `json:"fingerprint"` // 绑定指纹，NULL=不绑定
+	ExpiresAt   *time.Time `json:"expires_at"`  // NULL=永不过期
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	LastUsedIP  string     `json:"last_used_ip,omitempty"`
+	IsActive    bool       `json:"is_active"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 // Settings 系统设置项（表 settings，见文档 03 §2.6）。
 type Settings struct {
 	Key       string    `json:"key"`
@@ -35,12 +63,14 @@ type Settings struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// settings 键名常量（M1 涉及的）。
+// settings 键名常量（M1/M2 涉及的）。
 const (
-	SettingJWTSecret    = "jwt_secret"
-	SettingTokenTTL     = "token_ttl_seconds"
-	SettingRequireFp    = "require_fingerprint"
-	SettingAuditRetDays = "audit_retention_days"
+	SettingJWTSecret           = "jwt_secret"
+	SettingTokenTTL            = "token_ttl_seconds"
+	SettingRequireFp           = "require_fingerprint"
+	SettingAuditRetDays        = "audit_retention_days"
+	SettingKeyRotateGraceDays  = "key_rotate_grace_days"   // 密钥轮换宽限期（天），默认 7
+	SettingRateLimitAuthPerMin = "rate_limit_auth_per_min" // 认证接口每 IP 每分钟次数（06 §7），默认 100
 )
 
 // AuditLog 审计日志（表 audit_log，见文档 03 §2.5）。
@@ -66,6 +96,27 @@ const (
 	EventSystemStartup          = "system.startup"
 	EventSystemAdminInitialized = "system.admin_initialized"
 	EventSystemShutdown         = "system.shutdown"
+
+	EventAdminLogin          = "admin.login"
+	EventAdminLogout         = "admin.logout"
+	EventAdminLoginFailed    = "admin.login_failed"
+	EventAdminPasswordChange = "admin.password_change"
+
+	EventProjectCreate  = "project.create"
+	EventProjectUpdate  = "project.update"
+	EventProjectDelete  = "project.delete"
+	EventProjectDisable = "project.disable"
+	EventProjectEnable  = "project.enable"
+
+	EventKeyCreate  = "key.create"
+	EventKeyUpdate  = "key.update"
+	EventKeyDisable = "key.disable"
+	EventKeyEnable  = "key.enable"
+	EventKeyRotate  = "key.rotate"
+	EventKeyDelete  = "key.delete"
+
+	EventAuthAuthenticate       = "auth.authenticate"
+	EventAuthAuthenticateFailed = "auth.authenticate_failed"
 )
 
 // 审计结果常量。
@@ -83,5 +134,9 @@ const (
 
 // Target 类型常量。
 const (
-	TargetTypeSystem = "system"
+	TargetTypeSystem  = "system"
+	TargetTypeSession = "session"
+	TargetTypeProject = "project"
+	TargetTypeAPIKey  = "api_key"
+	TargetTypeAudit   = "audit"
 )

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/authcenter/authcenter/internal/database"
@@ -81,6 +83,85 @@ func BenchmarkEnsureAdminExisting(b *testing.B) {
 		created, _, err := svc.EnsureAdmin(ctx)
 		if err != nil || created {
 			b.Fatalf("幂等检查异常: created=%v err=%v", created, err)
+		}
+	}
+}
+
+// BenchmarkEnsureAdminFirstRun 测首次初始化完整成本（argon2 哈希 + 写库 + auth.log 落盘）。
+// 仅在首次启动执行一次；衡量 M1 启动自检的可接受耗时。
+// 每次迭代重置 admin 行与 auth.log，保持「首次」语义可重复。
+func BenchmarkEnsureAdminFirstRun(b *testing.B) {
+	dir := b.TempDir()
+	db, err := database.Open(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	st := store.New(db)
+	svc := NewAdminService(st, slog.New(slog.NewTextHandler(io.Discard, nil)), dir)
+	ctx := context.Background()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := db.Exec(`DELETE FROM admin_user`); err != nil {
+			b.Fatal(err)
+		}
+		_ = os.Remove(filepath.Join(dir, AuthLogFileName))
+		created, _, err := svc.EnsureAdmin(ctx)
+		if err != nil || !created {
+			b.Fatalf("首次初始化异常: created=%v err=%v", created, err)
+		}
+	}
+}
+
+// BenchmarkAuthenticateSuccess 测认证主路径（M3 核心：项目/密钥查询 + 审计写入）。
+// 单请求 ≈ 2 次索引查询 + 1 次审计写入（WAL fsync）；last_used 60s 窗口内只更新一次。
+// 限流阈值调高避免 benchmark 触发（默认 100/min）。
+func BenchmarkAuthenticateSuccess(b *testing.B) {
+	dir := b.TempDir()
+	db, err := database.Open(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	st := store.New(db)
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, model.SettingJWTSecret, "bench-secret-0123456789abcdef"); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, model.SettingRateLimitAuthPerMin, "1000000"); err != nil {
+		b.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	audit := NewAuditService(st, logger)
+	tokenSvc, err := NewTokenService(ctx, st)
+	if err != nil {
+		b.Fatal(err)
+	}
+	svc := NewAuthService(ctx, st, audit, tokenSvc, logger)
+
+	now := timeNowUTC()
+	p := &model.Project{Name: "bench", CurrentVersion: "1.0.0", IsActive: true, CreatedAt: now, UpdatedAt: now}
+	pid, err := st.CreateProject(ctx, p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	plain, err := RandomString(KeyValueLen)
+	if err != nil {
+		b.Fatal(err)
+	}
+	k := &model.APIKey{ProjectID: pid, Name: "k1", KeyValue: plain, IsActive: true, CreatedAt: now}
+	if _, err := st.CreateKey(ctx, k); err != nil {
+		b.Fatal(err)
+	}
+	req := AuthenticateRequest{ProjectName: "bench", Version: "1.0.0", Fingerprint: "fp-bench", Key: plain}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := svc.Authenticate(ctx, req, "127.0.0.1"); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

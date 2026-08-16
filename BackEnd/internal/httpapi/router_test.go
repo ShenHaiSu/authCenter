@@ -7,11 +7,35 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/authcenter/authcenter/internal/database"
+	"github.com/authcenter/authcenter/internal/service"
+	"github.com/authcenter/authcenter/internal/store"
 )
 
+// testRouter 构造带完整依赖的测试路由（临时 SQLite + 全部 service）。
 func testRouter(t *testing.T) http.Handler {
 	t.Helper()
-	return Router(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	dir := t.TempDir()
+	db, err := database.Open(dir)
+	if err != nil {
+		t.Fatalf("database.Open 失败: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	st := store.New(db)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	auditSvc := service.NewAuditService(st, logger)
+	sessionSvc := service.NewSessionService(st, logger)
+	projectSvc := service.NewProjectService(st, auditSvc)
+	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, 7)
+	return New(RouterDeps{
+		Logger:   logger,
+		Store:    st,
+		Sessions: sessionSvc,
+		Projects: projectSvc,
+		Apikeys:  apikeySvc,
+		Audits:   auditSvc,
+	})
 }
 
 // TestHealthz GET /healthz 返回 200 "ok"（文档 07 §5.3）。

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/authcenter/authcenter/internal/database"
@@ -15,12 +16,18 @@ import (
 // ErrNotFound 资源不存在哨兵错误。
 var ErrNotFound = errors.New("not found")
 
-// Store 汇总各实体数据访问接口，供服务层注入（M1 最小集）。
+// ErrConflict 唯一约束/名称冲突哨兵错误（映射 409/20201，文档 05 §2）。
+var ErrConflict = errors.New("conflict")
+
+// Store 汇总各实体数据访问接口，供服务层注入。
 type Store struct {
 	db *sql.DB
 	*AdminStore
 	*SettingsStore
 	*AuditStore
+	*SessionStore
+	*ProjectStore
+	*ApiKeyStore
 }
 
 // New 基于已迁移的 *sql.DB 构造 Store。
@@ -30,11 +37,20 @@ func New(db *sql.DB) *Store {
 		AdminStore:    &AdminStore{db: db},
 		SettingsStore: &SettingsStore{db: db},
 		AuditStore:    &AuditStore{db: db},
+		SessionStore:  &SessionStore{db: db},
+		ProjectStore:  &ProjectStore{db: db},
+		ApiKeyStore:   &ApiKeyStore{db: db},
 	}
 }
 
 // DB 暴露底层连接（迁移/备份等场景）。
 func (s *Store) DB() *sql.DB { return s.db }
+
+// isUniqueViolation 判断错误是否为 SQLite UNIQUE 约束冲突
+// （modernc.org/sqlite 错误文本含 "UNIQUE constraint failed"）。
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
 
 // AdminStore admin_user 表访问（M1：Exists / Create / 校验用）。
 type AdminStore struct {
