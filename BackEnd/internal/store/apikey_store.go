@@ -123,6 +123,30 @@ func (s *ApiKeyStore) CountKeysByProject(ctx context.Context, projectID int64) (
 	return n, nil
 }
 
+// CountActiveKeys 统计启用状态密钥总数（仪表盘统计 active_keys，05 §4.5）。
+func (s *ApiKeyStore) CountActiveKeys(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM api_key WHERE is_active = 1`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("统计有效密钥失败: %w", err)
+	}
+	return n, nil
+}
+
+// CountExpiringKeys 统计在 [now, until] 之间到期的启用密钥数
+// （仪表盘 expiring_keys_7d：7 天内到期，不含已过期，05 §4.5 / 02 §3）。
+func (s *ApiKeyStore) CountExpiringKeys(ctx context.Context, now, until time.Time) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM api_key
+		 WHERE is_active = 1 AND expires_at IS NOT NULL
+		   AND expires_at > ? AND expires_at <= ?`,
+		database.FormatTime(now), database.FormatTime(until)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("统计临期密钥失败: %w", err)
+	}
+	return n, nil
+}
+
 // scanKey 扫描单行密钥。
 func scanKey(row *sql.Row) (*model.APIKey, error) {
 	var k model.APIKey

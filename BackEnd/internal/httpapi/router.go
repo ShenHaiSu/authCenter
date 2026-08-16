@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/authcenter/authcenter/internal/service"
 	"github.com/authcenter/authcenter/internal/store"
+	"github.com/authcenter/authcenter/internal/web"
 )
 
 // RouterDeps 路由装配依赖（httpapi → service → store，文档 04 §1 依赖规则）。
@@ -17,9 +20,13 @@ type RouterDeps struct {
 	Apikeys  *service.ApiKeyService
 	Audits   *service.AuditService
 	Auths    *service.AuthService
+	Stats    *service.StatsService
+	// WebFS 前端静态资源树（已剥离目录前缀）。nil = 使用 go:embed 内嵌
+	// （发布二进制；开发模式由 main 注入 os.DirFS，文档 07 §2.3）。
+	WebFS fs.FS
 }
 
-// New 装配路由与中间件（M2：管理 API 全量；M3：对外认证 API）。
+// New 装配路由与中间件（M2：管理 API 全量；M3：对外认证 API；M4：前端静态资源 + 统计）。
 func New(deps RouterDeps) http.Handler {
 	mux := http.NewServeMux()
 
@@ -59,22 +66,51 @@ func New(deps RouterDeps) http.Handler {
 	hAudit := &auditHandlers{audits: deps.Audits}
 	mux.HandleFunc("GET /api/v1/audit-logs", requireAdmin(hAudit.handleListAuditLogs))
 
-	// 根路径占位：M4 内嵌 web 后替换为 http.FileServer（07 §2）。
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			fail(w, http.StatusNotFound, CodeNotFound, "资源不存在")
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>AuthCenter</title></head><body>
-<h1>AuthCenter 中心认证服务</h1>
-<p>服务运行中（M2 骨架）。管理界面将在后续里程碑提供。</p>
-<p>健康检查：<a href="/healthz">/healthz</a></p>
-</body></html>`))
-	})
+	// 仪表盘统计（05 §4.5，M4 落地：前端仪表盘数据源）。
+	if deps.Stats != nil {
+		hStats := &statsHandlers{stats: deps.Stats}
+		mux.HandleFunc("GET /api/v1/stats", requireAdmin(hStats.handleStats))
+	}
+
+	// 前端静态资源（M4：内嵌 web 或 -web-dir 磁盘目录，文档 07 §2）。
+	mux.Handle("/", webHandler(assetsFS(deps.WebFS)))
 
 	// 中间件链（由外到内：Recover → RequestID → AccessLog → LimitBody）。
 	return Recover(RequestID(AccessLog(deps.Logger)(LimitBody(mux))))
+}
+
+// assetsFS 解析前端资源树：优先注入的 WebFS（main 按 -web-dir 决定），否则用内嵌。
+func assetsFS(injected fs.FS) fs.FS {
+	if injected != nil {
+		return injected
+	}
+	// 内嵌 FS 路径带 "web/" 前缀，剥离后供 FileServer 使用（07 §2.2）。
+	if assets, err := web.Assets(); err == nil {
+		return assets
+	}
+	return nil
+}
+
+// webHandler 服务前端静态资源；拦截目录请求避免目录列表（安全约束，06 §11）。
+func webHandler(assets fs.FS) http.Handler {
+	if assets == nil {
+		// 内嵌资源不可用（极端情况）：返回 404 JSON。
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fail(w, http.StatusNotFound, CodeNotFound, "资源不存在")
+		})
+	}
+	fileServer := http.FileServer(http.FS(assets))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// "/css/" 这类目录请求不提供目录列表，统一 404。
+		if r.URL.Path != "/" && strings.HasSuffix(r.URL.Path, "/") {
+			fail(w, http.StatusNotFound, CodeNotFound, "资源不存在")
+			return
+		}
+		// /api/ 未注册路径保持 JSON 404（05 §1 响应约定），不落 FileServer。
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			fail(w, http.StatusNotFound, CodeNotFound, "资源不存在")
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }

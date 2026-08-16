@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -106,7 +107,7 @@ func run() error {
 		return err
 	}
 
-	// 7.5 初始化 service 层（文档 02 §6 第 4 步：M2 会话/项目/密钥/审计；M3 令牌/认证）。
+	// 7.5 初始化 service 层（文档 02 §6 第 4 步：M2 会话/项目/密钥/审计；M3 令牌/认证；M4 统计）。
 	auditSvc := service.NewAuditService(st, logger)
 	sessionSvc := service.NewSessionService(st, logger)
 	projectSvc := service.NewProjectService(st, auditSvc)
@@ -117,8 +118,15 @@ func run() error {
 		return err
 	}
 	authSvc := service.NewAuthService(auditCtx, st, auditSvc, tokenSvc, logger)
+	statsSvc := service.NewStatsService(st)
 
 	// 8. HTTP 服务（C2：仅 127.0.0.1:53779；超时参数见文档 02 §8）。
+	//    前端资源：-web-dir 开发模式读磁盘（改文件即刷新），否则用 go:embed 内嵌（07 §2.3）。
+	var webFS fs.FS
+	if cfg.WebDir != "" {
+		webFS = os.DirFS(cfg.WebDir)
+		logger.Info("前端资源使用磁盘目录（开发模式）", "web_dir", cfg.WebDir)
+	}
 	server := &http.Server{
 		Addr: cfg.Listen,
 		Handler: httpapi.New(httpapi.RouterDeps{
@@ -129,6 +137,8 @@ func run() error {
 			Apikeys:  apikeySvc,
 			Audits:   auditSvc,
 			Auths:    authSvc,
+			Stats:    statsSvc,
+			WebFS:    webFS,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/authcenter/authcenter/internal/database"
 	"github.com/authcenter/authcenter/internal/model"
 )
 
@@ -92,4 +94,38 @@ func (s *AuditStore) ListAudits(ctx context.Context, f AuditFilter, page, size i
 		items = append(items, e)
 	}
 	return items, total, rows.Err()
+}
+
+// CountAuthToday 统计今日认证次数：since 起（UTC 当日 0 点）的
+// auth.authenticate（成功）与 auth.authenticate_failed（失败）计数
+// （仪表盘 auth_today，05 §4.5 / 02 §3）。
+func (s *AuditStore) CountAuthToday(ctx context.Context, since time.Time) (total, success, failure int, err error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT event_type, count(*) FROM audit_log
+		 WHERE event_time >= ? AND event_type IN (?, ?)
+		 GROUP BY event_type`,
+		database.FormatTime(since), model.EventAuthAuthenticate, model.EventAuthAuthenticateFailed)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("统计今日认证失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ev string
+		var n int
+		if err := rows.Scan(&ev, &n); err != nil {
+			return 0, 0, 0, fmt.Errorf("扫描今日认证统计失败: %w", err)
+		}
+		switch ev {
+		case model.EventAuthAuthenticate:
+			success = n
+		case model.EventAuthAuthenticateFailed:
+			failure = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, 0, fmt.Errorf("今日认证统计迭代失败: %w", err)
+	}
+	total = success + failure
+	return total, success, failure, nil
 }

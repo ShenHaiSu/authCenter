@@ -70,6 +70,8 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 		Apikeys:  apikeySvc,
 		Audits:   auditSvc,
 		Auths:    authSvc,
+		Stats:    service.NewStatsService(st),
+		WebFS:    frontEndTestFS(t),
 	})
 	return &testClient{t: t, h: h, st: st, adminPass: plain}
 }
@@ -714,5 +716,129 @@ func TestAuthenticateAPIAudit(t *testing.T) {
 	}
 	if !strings.Contains(detail, "2.1.0") || !strings.Contains(detail, "fp-xyz") {
 		t.Errorf("成功审计 detail 应含版本与指纹: %s", detail)
+	}
+}
+
+// ================= M4 前端与统计集成测试（08 §3 / 05 §4.5） =================
+
+// TestStats 仪表盘统计正确性（05 §4.5）：项目数 / 有效密钥数 /
+// 7 天内到期密钥数 / 今日认证次数（成功/失败）。
+func TestStats(t *testing.T) {
+	c := newTestClient(t)
+	c.login()
+
+	// 初始：全 0。
+	rr := c.do(http.MethodGet, "/api/v1/stats", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stats 未登录状态异常: %d %s", rr.Code, rr.Body.String())
+	}
+	var zero struct {
+		Data struct {
+			Projects       int `json:"projects"`
+			ActiveKeys     int `json:"active_keys"`
+			ExpiringKeys7d int `json:"expiring_keys_7d"`
+			AuthToday      struct {
+				Total   int `json:"total"`
+				Success int `json:"success"`
+				Failure int `json:"failure"`
+			} `json:"auth_today"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &zero); err != nil {
+		t.Fatal(err)
+	}
+	if zero.Data.Projects != 0 || zero.Data.ActiveKeys != 0 || zero.Data.ExpiringKeys7d != 0 {
+		t.Errorf("初始统计应为 0: %+v", zero.Data)
+	}
+
+	// 建两个项目。
+	c.createProject("svc-stats-a")
+	c.createProject("svc-stats-b")
+	pid := 0
+	var projects struct {
+		Data struct {
+			Items []model.Project `json:"items"`
+		} `json:"data"`
+	}
+	rr = c.do(http.MethodGet, "/api/v1/projects?page=1&size=100", nil)
+	if err := json.Unmarshal(rr.Body.Bytes(), &projects); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range projects.Data.Items {
+		if p.Name == "svc-stats-a" {
+			pid = int(p.ID)
+		}
+	}
+	if pid == 0 {
+		t.Fatal("未找到 svc-stats-a")
+	}
+
+	// 密钥：k1 永不过期；k2 三天后到期（7 天内）；k3 已过期（不计入 expiring）。
+	_, k1 := c.createKeyReturn(int64(pid), "k1", nil)
+	c.createKeyReturn(int64(pid), "k2", map[string]any{
+		"expires_at": time.Now().UTC().Add(3 * 24 * time.Hour).Format(time.RFC3339),
+	})
+	c.createKeyReturn(int64(pid), "k3", map[string]any{
+		"expires_at": time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339),
+	})
+
+	// 认证：一次成功 + 一次失败（今日审计计数）。
+	c.doAuthenticate(map[string]any{"project_name": "svc-stats-a", "version": "1.0.0", "fingerprint": "fp", "key": k1})
+	c.doAuthenticate(map[string]any{"project_name": "svc-stats-a", "version": "1.0.0", "fingerprint": "fp", "key": "bad-key-000000000000000000000000000000"})
+
+	rr = c.do(http.MethodGet, "/api/v1/stats", nil)
+	var got struct {
+		Data struct {
+			Projects       int `json:"projects"`
+			ActiveKeys     int `json:"active_keys"`
+			ExpiringKeys7d int `json:"expiring_keys_7d"`
+			AuthToday      struct {
+				Total   int `json:"total"`
+				Success int `json:"success"`
+				Failure int `json:"failure"`
+			} `json:"auth_today"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Data.Projects != 2 {
+		t.Errorf("projects = %d, 期望 2", got.Data.Projects)
+	}
+	if got.Data.ActiveKeys != 3 {
+		t.Errorf("active_keys = %d, 期望 3（k1/k2/k3 均启用）", got.Data.ActiveKeys)
+	}
+	if got.Data.ExpiringKeys7d != 1 {
+		t.Errorf("expiring_keys_7d = %d, 期望 1（仅 k2）", got.Data.ExpiringKeys7d)
+	}
+	if got.Data.AuthToday.Success != 1 || got.Data.AuthToday.Failure != 1 || got.Data.AuthToday.Total != 2 {
+		t.Errorf("auth_today = %+v, 期望 success=1 failure=1 total=2", got.Data.AuthToday)
+	}
+}
+
+// TestStatsRequiresSession stats 接口需会话（05 §4：管理 API 均需 auth_session）。
+func TestStatsRequiresSession(t *testing.T) {
+	c := newTestClient(t)
+	rr := c.doRaw(http.MethodGet, "/api/v1/stats", nil)
+	if rr.Code != http.StatusUnauthorized || bodyCode(t, rr) != CodeSessionExpired {
+		t.Fatalf("无 cookie 访问 stats 应 401/20103: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestStaticAssetsFrontEnd 静态资源场景（08 §3）：GET / 返回前端页面；GET /login.html 200。
+func TestStaticAssetsFrontEnd(t *testing.T) {
+	c := newTestClient(t)
+
+	rr := c.doRaw(http.MethodGet, "/", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / status=%d, 期望 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "AuthCenter") {
+		t.Errorf("GET / 应返回前端页面: %s", rr.Body.String())
+	}
+
+	rr = c.doRaw(http.MethodGet, "/login.html", nil)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "login-form") {
+		t.Fatalf("GET /login.html 应 200 且含登录表单: status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

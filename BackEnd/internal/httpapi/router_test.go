@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,7 +38,33 @@ func testRouter(t *testing.T) http.Handler {
 		Projects: projectSvc,
 		Apikeys:  apikeySvc,
 		Audits:   auditSvc,
+		Stats:    service.NewStatsService(st),
+		WebFS:    frontEndTestFS(t),
 	})
+}
+
+// frontEndTestFS 返回 FrontEnd/ 源目录作为测试静态资源树。
+// go test 的工作目录在不同调用方式下可能为包目录或仓库根，因此从
+// os.Getwd() 逐级向上查找含 index.html 的 FrontEnd/ 目录（最多 5 级）。
+func frontEndTestFS(t *testing.T) fs.FS {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd 失败: %v", err)
+	}
+	dir := wd
+	for i := 0; i < 5; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "FrontEnd", "index.html")); err == nil {
+			return os.DirFS(filepath.Join(dir, "FrontEnd"))
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatalf("未找到 FrontEnd/index.html（起点 %s）: 静态资源测试无法运行", wd)
+	return nil
 }
 
 // TestHealthz GET /healthz 返回 200 "ok"（文档 07 §5.3）。
@@ -91,8 +120,8 @@ func TestUnknownAPIPath(t *testing.T) {
 	}
 }
 
-// TestRootPlaceholder 根路径返回占位页。
-func TestRootPlaceholder(t *testing.T) {
+// TestRootServesFrontEnd 根路径返回前端主界面 index.html（M4：内嵌/磁盘静态资源）。
+func TestRootServesFrontEnd(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	testRouter(t).ServeHTTP(rr, req)
@@ -101,17 +130,58 @@ func TestRootPlaceholder(t *testing.T) {
 		t.Errorf("status = %d, 期望 200", rr.Code)
 	}
 	if !strings.Contains(rr.Body.String(), "AuthCenter") {
-		t.Errorf("占位页应包含 AuthCenter: %s", rr.Body.String())
+		t.Errorf("首页应包含 AuthCenter: %s", rr.Body.String())
 	}
 }
 
-// TestRootNotFound 非 / 的非 API 路径也返回 404 JSON。
+// TestLoginHTML GET /login.html 返回登录页（08 §3 静态资源）。
+func TestLoginHTML(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login.html", nil)
+	testRouter(t).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, 期望 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "login-form") || !strings.Contains(body, "password") {
+		t.Errorf("登录页应包含登录表单: %s", body)
+	}
+}
+
+// TestStaticAssets 静态 css/js 资源可访问（02 §9：全部资源本地化、内嵌可用）。
+func TestStaticAssets(t *testing.T) {
+	for _, path := range []string{
+		"/css/base.css", "/css/auth.css",
+		"/js/api.js", "/js/common.js", "/js/login.js", "/js/app.js",
+		"/js/dashboard.js", "/js/projects.js", "/js/keys.js", "/js/audit.js",
+	} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		testRouter(t).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, 期望 200", path, rr.Code)
+		}
+	}
+}
+
+// TestRootNotFound 不存在的静态资源路径返回 404。
 func TestRootNotFound(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
 	testRouter(t).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, 期望 404", rr.Code)
+	}
+}
+
+// TestDirListingBlocked 目录请求不返回目录列表（安全约束 06 §11）。
+func TestDirListingBlocked(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/css/", nil)
+	testRouter(t).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("/css/ 目录请求 status = %d, 期望 404（禁止目录列表）", rr.Code)
 	}
 }
 

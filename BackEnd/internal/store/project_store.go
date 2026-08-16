@@ -137,6 +137,15 @@ func (s *ProjectStore) DeleteProject(ctx context.Context, id int64) error {
 	return nil
 }
 
+// CountProjects 统计项目总数（仪表盘统计，05 §4.5 / 04 §1 stats_service）。
+func (s *ProjectStore) CountProjects(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM project`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("统计项目失败: %w", err)
+	}
+	return n, nil
+}
+
 // scanProject 扫描单行 project（含子查询 key_count 时另走 ListProjects）。
 func scanProject(row *sql.Row) (*model.Project, error) {
 	var p model.Project
