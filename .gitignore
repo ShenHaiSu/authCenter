@@ -35,6 +35,10 @@ Bundle/linux/*
 # 构建期由脚本复制进 BackEnd 的前端副本（07 §2.2：清空并保留 .gitkeep）
 BackEnd/internal/web/*
 !BackEnd/internal/web/.gitkeep
+# 例外：go:embed 声明源码必须入库（07 §2 内嵌机制，缺失则 web 包无法编译）
+!BackEnd/internal/web/embed.go
+!BackEnd/internal/web/embed_test.go
+!BackEnd/internal/web/.gitkeep
 # 本地直接编译出的后端二进制（脚本产物统一输出到 Bundle/）
 # 注意：不能写裸 "authcenter"，否则会误忽略 cmd/authcenter/ 源码目录
 /authcenter
