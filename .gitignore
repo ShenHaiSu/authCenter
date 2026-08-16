@@ -1,0 +1,59 @@
+# ===================== AuthCenter .gitignore =====================
+# 依据：Documents/backEndArchitect/（03 数据库、06 安全、07 构建部署）
+# 项目形态：纯 Go 后端（无配置文件，单二进制）+ 纯静态前端 + Bundle 双平台发布包
+
+# ---------- 运行数据 / 敏感文件（禁止提交） ----------
+# 数据目录：authcenter.db（含密钥明文、JWT secret）与 auth.log（含 admin 初始密码）
+# 见 06-认证与安全设计.md §3 / 07-构建部署与bundle.md §6
+data/
+# SQLite 数据库及其临时/伴随文件
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+# 日志（auth.log 等，含敏感信息）
+*.log
+# 环境变量（AUTHCENTER_JWT_SECRET 等，见 04-后端模块设计.md §2）
+.env
+.env.*
+!.env.example
+# 私钥 / 证书（Caddy 反代相关）
+*.key
+*.pem
+*.crt
+
+# ---------- 构建产物 ----------
+# Bundle 双平台发布包：build.ps1 / build.sh 生成（见 07-构建部署与bundle.md §1/§4）
+# 保留 windows/linux 目录骨架（.gitkeep），忽略其中全部产物
+Bundle/*
+!Bundle/windows/
+!Bundle/linux/
+Bundle/windows/*
+Bundle/linux/*
+!Bundle/windows/.gitkeep
+!Bundle/linux/.gitkeep
+# 构建期由脚本复制进 BackEnd 的前端副本（07 §2.2：清空并保留 .gitkeep）
+BackEnd/internal/web/*
+!BackEnd/internal/web/.gitkeep
+# 本地直接编译出的后端二进制（脚本产物统一输出到 Bundle/）
+authcenter
+authcenter.exe
+
+# ---------- Go 测试 / 分析产物 ----------
+*.test
+*.out
+coverage.out
+coverage.html
+
+# ---------- IDE / 编辑器 / 工具 ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.reasonix/
+
+# ---------- 操作系统 ----------
+Thumbs.db
+Desktop.ini
+.DS_Store
