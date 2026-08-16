@@ -9,6 +9,8 @@ const VIEW_TITLES = {
   keys: '密钥管理',
   audit: '审计日志',
   password: '修改密码',
+  guide: '使用教程',
+  docs: '对接文档',
 };
 
 /** 视图加载函数映射（keys 由 projects.js 进入时设置 currentProject）。 */
@@ -18,6 +20,8 @@ const VIEW_LOADERS = {
   keys: loadKeys,
   audit: loadAudit,
   password: renderPasswordView,
+  guide: loadGuide,
+  docs: loadDocs,
 };
 
 /** 全局轻量状态（01 §5：不引入框架状态库）。 */

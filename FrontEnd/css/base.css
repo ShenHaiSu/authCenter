@@ -472,3 +472,92 @@ table.table {
   .sidebar-nav a { justify-content: center; padding: 14px 0; }
   .content { padding: 14px; }
 }
+
+/* ============================================================
+   教程 / 文档视图（新界面设计 01 §7 / 02 §7，前端架构文档 02 §10/§11）
+   ============================================================ */
+
+/* ---------- 两栏布局 ---------- */
+.guide-layout { display: flex; gap: 20px; align-items: flex-start; }
+.guide-toc {
+  width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 72px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+.guide-toc a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.guide-toc a:hover { background: var(--bg-hover); color: var(--primary); text-decoration: none; }
+.guide-content { flex: 1; min-width: 0; }
+
+/* ---------- 小节与文本 ---------- */
+.guide-section { margin-bottom: 18px; }
+.guide-section h3 { font-size: 15px; margin-bottom: 10px; }
+.guide-section h4 { font-size: 14px; margin: 14px 0 8px; }
+.guide-content p { line-height: 1.8; margin: 8px 0; }
+.guide-steps { padding-left: 20px; line-height: 1.9; }
+.guide-list { padding-left: 20px; line-height: 1.9; }
+.guide-content code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  word-break: break-all;
+}
+
+/* ---------- 提示框 ---------- */
+.callout {
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  margin: 10px 0;
+  line-height: 1.7;
+}
+.callout-tip { background: var(--info-soft); color: #0369a1; }
+.callout-warn { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+.callout code { font-family: var(--font-mono); font-size: 12px; }
+
+/* ---------- 截图占位 ---------- */
+.guide-shot {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 28px;
+  font-size: 12px;
+  margin: 10px 0;
+  background: var(--bg);
+}
+
+/* ---------- 代码块（对接文档） ---------- */
+.code-block {
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+  line-height: 1.6;
+  white-space: pre;
+  word-break: normal;
+}
+.code-block code { font-family: inherit; }
+
+/* ---------- 窄屏适配（教程/文档两栏变单栏） ---------- */
+@media (max-width: 768px) {
+  .guide-layout { flex-direction: column; }
+  .guide-toc { position: static; width: 100%; max-height: none; }
+}
