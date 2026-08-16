@@ -183,9 +183,24 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// clientIP 从 RemoteAddr 提取客户端 IP（不含端口）。
-// 兼容 IPv6（如 "[::1]:53779" 与 "::1"），提取失败时回退原值。
+// clientIP 解析客户端真实 IP：优先 X-Forwarded-For（前置 caddy 已先删后设覆盖该头，
+// 见部署 Caddyfile），取最左首个合法 IP；缺失或非法时回落 RemoteAddr
+// （服务仅监听 127.0.0.1，即回落为 127.0.0.1）。
 func clientIP(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		for _, part := range strings.Split(xff, ",") {
+			ip := strings.TrimSpace(part)
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host // 兼容带端口形式
+			}
+			ip = strings.Trim(ip, "[]")
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+	}
+	// 回落：RemoteAddr 解析（本架构下为 127.0.0.1）。
+	// 兼容 IPv6（如 "[::1]:53779" 与 "::1"），提取失败时回退原值。
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		// 无端口形式（IPv6 裸地址或测试构造）：去掉 IPv6 方括号后返回。
