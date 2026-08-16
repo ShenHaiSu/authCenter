@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 — AuthCenter</title>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="logo">AuthCenter</div>
+      <div class="sub">中心认证服务 · 管理员登录</div>
+    </div>
+
+    <div id="login-error" class="auth-error" role="alert"></div>
+
+    <form id="login-form" autocomplete="off">
+      <div class="form-group">
+        <label for="username">用户名</label>
+        <input id="username" name="username" class="form-control" type="text"
+               placeholder="admin" value="admin" required autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input id="password" name="password" class="form-control" type="password"
+               placeholder="请输入密码" required autocomplete="current-password">
+      </div>
+      <button id="login-btn" type="submit" class="btn btn-primary">登 录</button>
+    </form>
+
+    <div class="auth-hint">
+      首次使用？初始密码见服务端控制台或
+      <code>data/auth.log</code>（仅首次启动生成，之后不再展示）。
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/login.js"></script>
+</body>
+</html>
