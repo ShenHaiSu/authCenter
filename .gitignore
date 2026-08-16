@@ -22,16 +22,15 @@ data/
 *.pem
 *.crt
 
-# ---------- 构建产物 ----------
-# Bundle 双平台发布包：build.ps1 / build.sh 生成（见 07-构建部署与bundle.md §1/§4）
-# 保留 windows/linux 目录骨架（.gitkeep），忽略其中全部产物
+# ---------- 构建产物（入库：本机交叉编译，服务器直接拉取部署） ----------
+# 服务器性能不足，不在服务器上编译；开发机用 build.ps1 / build.sh 交叉编译
+# windows/amd64 与 linux/amd64 产物后整体入库，服务器 git pull 即可部署
+# （见 07-构建部署与bundle.md；部署步骤见 deploy/README.linux.md）
 Bundle/*
 !Bundle/windows/
 !Bundle/linux/
-Bundle/windows/*
-Bundle/linux/*
-!Bundle/windows/.gitkeep
-!Bundle/linux/.gitkeep
+!Bundle/SHA256SUMS.txt
+# 注意：Bundle 内若有 data/、*.db、*.log 仍被上方全局规则忽略（敏感数据绝不入库）
 # 构建期由脚本复制进 BackEnd 的前端副本（07 §2.2：清空并保留 .gitkeep）
 BackEnd/internal/web/*
 !BackEnd/internal/web/.gitkeep
@@ -40,9 +39,10 @@ BackEnd/internal/web/*
 !BackEnd/internal/web/embed_test.go
 !BackEnd/internal/web/.gitkeep
 # 本地直接编译出的后端二进制（脚本产物统一输出到 Bundle/）
-# 注意：不能写裸 "authcenter"，否则会误忽略 cmd/authcenter/ 源码目录
+# 注意：必须锚定根目录，不能写裸 "authcenter"/"authcenter.exe"，
+# 否则会误忽略 cmd/authcenter/ 源码目录与 Bundle/windows/authcenter.exe
 /authcenter
-authcenter.exe
+/authcenter.exe
 
 # ---------- Go 测试 / 分析产物 ----------
 *.test
