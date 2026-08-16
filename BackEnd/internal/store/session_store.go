@@ -15,9 +15,11 @@ type SessionStore struct {
 	db *sql.DB
 }
 
-// CreateSession 插入会话（库中只存 token 的 SHA-256）。
+// CreateSession 插入会话（库中只存 token 的 SHA-256），并回填自增 id。
+// 回填 sess.ID 供调用方用于审计 target_id（此前未回填导致 admin.login 审计
+// target_id 恒为 NULL，无法追溯到具体会话）。
 func (s *SessionStore) CreateSession(ctx context.Context, sess *model.AdminSession) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO admin_session (token_hash, admin_user_id, expires_at, ip, user_agent, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		sess.TokenHash, sess.AdminUserID, database.FormatTime(sess.ExpiresAt),
@@ -25,6 +27,11 @@ func (s *SessionStore) CreateSession(ctx context.Context, sess *model.AdminSessi
 	if err != nil {
 		return fmt.Errorf("创建会话失败: %w", err)
 	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("读取会话 id 失败: %w", err)
+	}
+	sess.ID = id
 	return nil
 }
 

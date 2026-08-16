@@ -154,7 +154,12 @@ type AuditStore struct {
 }
 
 // InsertAudit 写入一条审计记录（文档 03 §2.5）。
+// EventTime 为零值时自动填充当前 UTC：event_time 是 NOT NULL 必填列，
+// 存储入口兜底保证任何调用方漏设都不会产生 0001 年零值时间（修复 admin.login/logout 时间异常）。
 func (s *AuditStore) InsertAudit(ctx context.Context, e *model.AuditLog) error {
+	if e.EventTime.IsZero() {
+		e.EventTime = database.NowUTC()
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log
 		   (event_time, event_type, actor_type, actor_id, actor_name,
