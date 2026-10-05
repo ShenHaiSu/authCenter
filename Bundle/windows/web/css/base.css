@@ -561,3 +561,22 @@ table.table {
   .guide-layout { flex-direction: column; }
   .guide-toc { position: static; width: 100%; max-height: none; }
 }
+ /* ---------- 系统设置（need01 01-F019） ---------- */
+ .settings-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+ .settings-row label { width: 110px; flex-shrink: 0; font-size: 13px; color: var(--text-secondary); }
+ .settings-row .form-control { max-width: 160px; }
+ .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+
+/* ---------- 多管理员与 RBAC（need01 02-F020） ---------- */
+.role-badge { margin-left: 6px; font-weight: 600; }
+/* 强制改密期间禁用的导航项：仍可点击给出提示，仅作视觉与体验提示 */
+.sidebar-nav a.nav-locked { opacity: 0.45; cursor: not-allowed; }
+.sidebar-nav a.nav-locked:hover { background: none; color: var(--text-secondary); }
+.form-group .check-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}

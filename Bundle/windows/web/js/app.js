@@ -3,26 +3,30 @@
  * 前端架构文档 01 §4/§5 / 02 §2/§7
  * ============================================================ */
 
-const VIEW_TITLES = {
-  dashboard: '仪表盘',
-  projects: '项目',
-  keys: '密钥管理',
-  audit: '审计日志',
-  password: '修改密码',
-  guide: '使用教程',
-  docs: '对接文档',
-};
+ const VIEW_TITLES = {
+   dashboard: '仪表盘',
+   projects: '项目',
+   keys: '密钥管理',
+   audit: '审计日志',
+   settings: '系统设置',
+   admins: '管理员',
+   password: '修改密码',
+   guide: '使用教程',
+   docs: '对接文档',
+ };
 
 /** 视图加载函数映射（keys 由 projects.js 进入时设置 currentProject）。 */
-const VIEW_LOADERS = {
-  dashboard: loadDashboard,
-  projects: loadProjects,
-  keys: loadKeys,
-  audit: loadAudit,
-  password: renderPasswordView,
-  guide: loadGuide,
-  docs: loadDocs,
-};
+ const VIEW_LOADERS = {
+   dashboard: loadDashboard,
+   projects: loadProjects,
+   keys: loadKeys,
+   audit: loadAudit,
+   settings: loadSettings,
+   admins: loadAdmins,
+   password: renderPasswordView,
+   guide: loadGuide,
+   docs: loadDocs,
+ };
 
 /** 全局轻量状态（01 §5：不引入框架状态库）。 */
 const state = { user: null, currentProject: null };
@@ -57,6 +61,17 @@ function showView(id) {
   $('#current-user').textContent = me.user.username;
   $('#sidebar-user').textContent = '当前用户：' + me.user.username;
 
+  // 顶栏角色徽章（F-020 §6.1）。
+  $('#current-role').innerHTML = roleBadge(me.user.role);
+  $('#current-role').title = me.user.role === 'owner' ? '超级管理员' : '管理员';
+
+  // 导航按角色隐藏：非 owner 看不到「管理员」入口。
+  // 仅体验优化——真正的边界在后端 requireOwner（403/20104）。
+  if (me.user.role !== 'owner') {
+    const nav = document.getElementById('nav-admins');
+    if (nav) nav.style.display = 'none';
+  }
+
   // 导航切换。
   $$('.sidebar-nav a').forEach((a) => {
     a.addEventListener('click', () => showView(a.dataset.view));
@@ -70,9 +85,35 @@ function showView(id) {
     location.href = '/login.html';
   });
 
+  // 强制改密流程（F-020 §6.1）：后端已在 RequireAdmin 拦截非白名单路径，
+  // 这里只负责把用户引导到改密页并禁用其它导航，避免用户一头雾水。
+  if (me.user.force_password_change) {
+    lockNavigationForPasswordChange();
+    showView('password');
+    toast('请先修改初始密码后再使用其它功能', 'warning');
+    return;
+  }
+
   // 默认视图：仪表盘。
   showView('dashboard');
 })();
+
+/**
+ * 强制改密期间禁用侧边栏其它导航项（仅保留「修改密码」可点）。
+ * 后端仍然独立鉴权，这里只做体验层提示。
+ */
+function lockNavigationForPasswordChange() {
+  $$('.sidebar-nav a').forEach((a) => {
+    if (a.dataset.view === 'password') return;
+    a.classList.add('nav-locked');
+    a.title = '请先修改初始密码';
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toast('请先修改初始密码', 'warning');
+    });
+  });
+}
 
 /* ---------------- 修改密码视图（02 §7） ---------------- */
 
@@ -137,6 +178,7 @@ function renderPasswordView() {
         api('/admin/password', { method: 'PUT', body: { old_password: oldPw, new_password: newPw } })
       );
       toast('密码已修改，请重新登录', 'success');
+      // 后端改密会清空全部会话（含当前），统一走一次重新登录。
       setTimeout(() => { location.href = '/login.html'; }, 800);
     } catch (err) {
       toastError(err);

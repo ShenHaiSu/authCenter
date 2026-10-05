@@ -18,6 +18,8 @@
         <a data-view="dashboard" class="active"><span class="nav-icon">📊</span><span class="nav-label">仪表盘</span></a>
         <a data-view="projects"><span class="nav-icon">🗂️</span><span class="nav-label">项目</span></a>
         <a data-view="audit"><span class="nav-icon">📋</span><span class="nav-label">审计日志</span></a>
+        <a data-view="settings" id="nav-settings"><span class="nav-icon">⚙️</span><span class="nav-label">系统设置</span></a>
+        <a data-view="admins" id="nav-admins"><span class="nav-icon">👥</span><span class="nav-label">管理员</span></a>
         <a data-view="password"><span class="nav-icon">🔑</span><span class="nav-label">修改密码</span></a>
         <a data-view="guide"><span class="nav-icon">📖</span><span class="nav-label">使用教程</span></a>
         <a data-view="docs"><span class="nav-icon">🔌</span><span class="nav-label">对接文档</span></a>
@@ -31,6 +33,7 @@
         <div class="topbar-title" id="topbar-title">仪表盘</div>
         <div class="topbar-user">
           <span id="current-user">—</span>
+          <span id="current-role"></span>
           <button id="logout-btn" class="btn btn-sm">登出</button>
         </div>
       </header>
@@ -55,7 +58,10 @@
         <section id="view-audit" class="view">
           <div id="audit-root"></div>
         </section>
-
+        <!-- 系统设置（need01 01-F019） -->
+        <section id="view-settings" class="view"><div id="settings-root"></div></section>
+        <!-- 管理员账号管理（need01 02-F020，仅 owner 可见） -->
+        <section id="view-admins" class="view"><div id="admins-root"></div></section>
         <!-- 修改密码 -->
         <section id="view-password" class="view">
           <div id="password-root"></div>
@@ -111,6 +117,8 @@
   <script src="/js/projects.js"></script>
   <script src="/js/keys.js"></script>
   <script src="/js/audit.js"></script>
+  <script src="/js/admins.js"></script>
+  <script src="/js/settings.js"></script>
   <script src="/js/guide.js"></script>
   <script src="/js/docs.js"></script>
   <script src="/js/app.js"></script>
