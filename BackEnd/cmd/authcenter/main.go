@@ -133,7 +133,10 @@ func run() error {
 	}
 	authSvc := service.NewAuthService(auditCtx, st, auditSvc, tokenSvc, logger)
 	statsSvc := service.NewStatsService(st)
-
+	// M7：审计保留策略后台任务（settings.audit_retention_days，默认 90 天，0=永久保留）。
+	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
+	retentionSvc.SyncInterval(auditCtx)
+	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
 	// 8. HTTP 服务（C2：仅 127.0.0.1:53779；超时参数见文档 02 §8）。
 	//    前端资源：-web-dir 开发模式读磁盘（改文件即刷新），否则用 go:embed 内嵌（07 §2.3）。
 	var webFS fs.FS
@@ -141,18 +144,28 @@ func run() error {
 		webFS = os.DirFS(cfg.WebDir)
 		logger.Info("前端资源使用磁盘目录（开发模式）", "web_dir", cfg.WebDir)
 	}
+	// 优雅关闭上下文先建：MaintenanceRunner 随 ctx 停止（need01 01 §4.5）。
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	maint := service.NewMaintenanceRunner(st, auditSvc, logger)
+	maint.Register(retentionSvc)
+	maint.Start(ctx)
+	defer maint.Stop()
 	server := &http.Server{
 		Addr: cfg.Listen,
 		Handler: httpapi.New(httpapi.RouterDeps{
-			Logger:   logger,
-			Store:    st,
-			Sessions: sessionSvc,
-			Projects: projectSvc,
-			Apikeys:  apikeySvc,
-			Audits:   auditSvc,
-			Auths:    authSvc,
-			Stats:    statsSvc,
-			WebFS:    webFS,
+			Logger:    logger,
+			Store:     st,
+			Sessions:  sessionSvc,
+			Projects:  projectSvc,
+			Apikeys:   apikeySvc,
+			Audits:    auditSvc,
+			Auths:     authSvc,
+			Stats:     statsSvc,
+			Settings:  settingsSvc,
+			Retention: retentionSvc,
+			Runner:    maint,
+			WebFS:     webFS,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -161,9 +174,6 @@ func run() error {
 	}
 
 	// 优雅关闭（文档 04 §8）：SIGINT/SIGTERM → Shutdown(10s) → 关闭 db → system.shutdown 审计。
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("HTTP 服务已启动", "addr", server.Addr)

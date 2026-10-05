@@ -69,8 +69,13 @@ const (
 	SettingTokenTTL            = "token_ttl_seconds"
 	SettingRequireFp           = "require_fingerprint"
 	SettingAuditRetDays        = "audit_retention_days"
-	SettingKeyRotateGraceDays  = "key_rotate_grace_days"   // 密钥轮换宽限期（天），默认 7
-	SettingRateLimitAuthPerMin = "rate_limit_auth_per_min" // 认证接口每 IP 每分钟次数（06 §7），默认 100
+	SettingKeyRotateGraceDays  = "key_rotate_grace_days"
+	SettingRateLimitAuthPerMin = "rate_limit_auth_per_min"
+	// F-019 审计保留策略 settings 键（need01 01 §9 步骤 1，键表见 05 §1）。
+	SettingAuditCleanupIntervalHours = "audit_cleanup_interval_hours"
+	SettingAuditMinKeepRows          = "audit_min_keep_rows"
+	SettingAuditLastCleanupAt        = "audit_last_cleanup_at"
+	SettingAuditLastCleanupRows      = "audit_last_cleanup_rows"
 )
 
 // AuditLog 审计日志（表 audit_log，见文档 03 §2.5）。
@@ -117,6 +122,11 @@ const (
 
 	EventAuthAuthenticate       = "auth.authenticate"
 	EventAuthAuthenticateFailed = "auth.authenticate_failed"
+	// F-019 审计保留策略事件（need01 01 §9 步骤 1，事件表见 05 §2）。
+	EventSystemAuditCleanup = "system.audit_cleanup"
+	EventSettingsUpdate     = "settings.update"
+	// 基础设施：schema 迁移事件（need01 06 §9 步骤 5）。
+	EventSystemSchemaMigrated = "system.schema_migrated"
 )
 
 // 审计结果常量。

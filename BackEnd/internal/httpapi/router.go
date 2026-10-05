@@ -11,16 +11,18 @@ import (
 	"github.com/authcenter/authcenter/internal/web"
 )
 
-// RouterDeps 路由装配依赖（httpapi → service → store，文档 04 §1 依赖规则）。
 type RouterDeps struct {
-	Logger   *slog.Logger
-	Store    *store.Store
-	Sessions *service.SessionService
-	Projects *service.ProjectService
-	Apikeys  *service.ApiKeyService
-	Audits   *service.AuditService
-	Auths    *service.AuthService
-	Stats    *service.StatsService
+	Logger    *slog.Logger
+	Store     *store.Store
+	Sessions  *service.SessionService
+	Projects  *service.ProjectService
+	Apikeys   *service.ApiKeyService
+	Audits    *service.AuditService
+	Auths     *service.AuthService
+	Stats     *service.StatsService
+	Settings  *service.SettingsService
+	Retention *service.AuditRetentionService
+	Runner    *service.MaintenanceRunner
 	// WebFS 前端静态资源树（已剥离目录前缀）。nil = 使用 go:embed 内嵌
 	// （发布二进制；开发模式由 main 注入 os.DirFS，文档 07 §2.3）。
 	WebFS fs.FS
@@ -70,6 +72,14 @@ func New(deps RouterDeps) http.Handler {
 	if deps.Stats != nil {
 		hStats := &statsHandlers{stats: deps.Stats}
 		mux.HandleFunc("GET /api/v1/stats", requireAdmin(hStats.handleStats))
+	}
+	// 系统设置（need01 01 §5：保留策略 + 用量 + 手动维护，全部需会话）。
+	if deps.Settings != nil && deps.Retention != nil {
+		hSettings := &settingsHandlers{settings: deps.Settings, retention: deps.Retention, runner: deps.Runner}
+		mux.HandleFunc("GET /api/v1/settings", requireAdmin(hSettings.handleGetSettings))
+		mux.HandleFunc("PUT /api/v1/settings", requireAdmin(hSettings.handleUpdateSettings))
+		mux.HandleFunc("POST /api/v1/settings/audit/cleanup-now", requireAdmin(hSettings.handleCleanupNow))
+		mux.HandleFunc("POST /api/v1/settings/audit/checkpoint", requireAdmin(hSettings.handleCheckpoint))
 	}
 
 	// 前端静态资源（M4：内嵌 web 或 -web-dir 磁盘目录，文档 07 §2）。

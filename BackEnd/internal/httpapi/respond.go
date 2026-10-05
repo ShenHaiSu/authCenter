@@ -65,7 +65,6 @@ func fail(w http.ResponseWriter, status, code int, message string) {
 	})
 }
 
-// failService 将 service 层业务错误映射为 HTTP 状态码 + 业务码（文档 05 §2）。
 func failService(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrBadCredentials):
@@ -82,6 +81,12 @@ func failService(w http.ResponseWriter, err error) {
 		fail(w, http.StatusBadRequest, CodeInvalidParam, "参数缺失或非法")
 	case errors.Is(err, service.ErrProjectDisabled):
 		fail(w, http.StatusConflict, CodeStateConflict, "项目已停用")
+	case errors.Is(err, service.ErrJobRunning):
+		fail(w, http.StatusConflict, CodeStateConflict, "任务已在运行，请稍后再试")
+	case errors.Is(err, service.ErrStateConflict):
+		fail(w, http.StatusConflict, CodeStateConflict, "资源状态不允许")
+	case errors.Is(err, service.ErrForbidden):
+		fail(w, http.StatusForbidden, CodeForbidden, "无权限")
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, http.StatusNotFound, CodeNotFound, "资源不存在")
 	case errors.Is(err, store.ErrConflict):

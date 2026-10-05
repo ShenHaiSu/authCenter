@@ -129,3 +129,55 @@ func (s *AuditStore) CountAuthToday(ctx context.Context, since time.Time) (total
 	total = success + failure
 	return total, success, failure, nil
 }
+
+// CountAudits 返回审计总行数（F-019 保底行数判定用）。
+func (s *AuditStore) CountAudits(ctx context.Context) (int64, error) {
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log`).Scan(&total); err != nil {
+		return 0, fmt.Errorf("统计审计总数失败: %w", err)
+	}
+	return total, nil
+}
+
+// OldestAuditTime 返回最早事件时间（ISO8601 原串）；空表返回 ""。
+func (s *AuditStore) OldestAuditTime(ctx context.Context) (string, error) {
+	var v sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT event_time FROM audit_log ORDER BY event_time ASC LIMIT 1`).Scan(&v)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("查询最早审计时间失败: %w", err)
+	}
+	if !v.Valid {
+		return "", nil
+	}
+	return v.String, nil
+}
+
+// DeleteAuditsBefore 分批删除 event_time < cutoff 的记录（严格小于）。
+// 必须走子查询 LIMIT，避免一次锁全表（need01 01 §4.3）。
+func (s *AuditStore) DeleteAuditsBefore(ctx context.Context, cutoff string, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE event_time < ? ORDER BY id LIMIT ?)`,
+		cutoff, limit)
+	if err != nil {
+		return 0, fmt.Errorf("删除超期审计失败: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("读取删除行数失败: %w", err)
+	}
+	return n, nil
+}
+
+// CheckpointTruncate 执行 PRAGMA wal_checkpoint(TRUNCATE)，回收 WAL 空间（need01 01 §4.4）。
+func (s *AuditStore) CheckpointTruncate(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("WAL checkpoint 失败: %w", err)
+	}
+	return nil
+}
