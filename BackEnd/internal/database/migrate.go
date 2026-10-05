@@ -21,9 +21,11 @@ type AppliedStep struct {
 }
 
 // migrationSteps 迁移步骤表。只允许在末尾追加，禁止修改历史步骤。
-// 版本号按落地顺序分配；当前 M7(F-019)无 DDL 变更，仅 v1 基线。
+// 版本号按落地顺序分配（《06》§3.1）：M7(F-019) 无 DDL 变更；
+// M9(F-020) 先于 F-021 落地，故 admin_user_role 取 v2，F-021 的 api_key_hash 顺延为 v3。
 var migrationSteps = []step{
 	{Version: 1, Name: "baseline_tables", Up: upBaselineTables},
+	{Version: 2, Name: "admin_user_role", Up: upAdminUserRole},
 }
 
 // targetSchemaVersion 当前二进制期望的 schema 版本（= 最高注册版本）。
@@ -38,6 +40,33 @@ func upBaselineTables(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("基线语句 #%d 失败: %w", i+1, err)
 		}
+	}
+	return nil
+}
+
+// upAdminUserRole F-020（M9）：admin_user 新增 role/force_password_change/updated_at
+// 三列（幂等 ensureColumn），并把存量初始账号 admin 回填为 owner。
+//
+// 回填条件说明（与《02》§3.2 的差异，刻意修正）：role 列定义为 NOT NULL DEFAULT 'admin'，
+// SQLite 在 ADD COLUMN 时把存量行填成 admin 而非 NULL，故《02》§3.2 写的
+// `role IS NULL OR role = 空串` 条件对存量库恒不命中 → 存量 admin 永远停留在 admin，
+// 无人可管理管理员（把自己锁在门外）。因此改为 null-safe 的 `role IS NOT 'owner'`：
+// 新装库此时表为空（EnsureAdmin 在迁移之后创建 admin 且直接写 owner），天然空跑；
+// 存量库首次升 v2 时提为 owner，之后条件不再命中 → 幂等。
+func upAdminUserRole(db *sql.DB) error {
+	cols := []struct{ def, name string }{
+		{"role TEXT NOT NULL DEFAULT 'admin'", "role"},
+		{"force_password_change INTEGER NOT NULL DEFAULT 0", "force_password_change"},
+		{"updated_at TEXT", "updated_at"},
+	}
+	for _, c := range cols {
+		if err := ensureColumn(db, "admin_user", c.def, c.name); err != nil {
+			return err
+		}
+	}
+	if _, err := db.Exec(
+		`UPDATE admin_user SET role = 'owner' WHERE username = 'admin' AND role IS NOT 'owner'`); err != nil {
+		return fmt.Errorf("回填初始账号 admin 为 owner 失败: %w", err)
 	}
 	return nil
 }
