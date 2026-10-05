@@ -62,16 +62,23 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 		t.Fatalf("NewTokenService 失败: %v", err)
 	}
 	authSvc := service.NewAuthService(ctx, st, auditSvc, tokenSvc, logger)
+	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
+	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
+	maint := service.NewMaintenanceRunner(st, auditSvc, logger)
+	maint.Register(retentionSvc)
 	h := New(RouterDeps{
-		Logger:   logger,
-		Store:    st,
-		Sessions: sessionSvc,
-		Projects: projectSvc,
-		Apikeys:  apikeySvc,
-		Audits:   auditSvc,
-		Auths:    authSvc,
-		Stats:    service.NewStatsService(st),
-		WebFS:    frontEndTestFS(t),
+		Logger:    logger,
+		Store:     st,
+		Sessions:  sessionSvc,
+		Projects:  projectSvc,
+		Apikeys:   apikeySvc,
+		Audits:    auditSvc,
+		Auths:     authSvc,
+		Stats:     service.NewStatsService(st),
+		Settings:  settingsSvc,
+		Retention: retentionSvc,
+		Runner:    maint,
+		WebFS:     frontEndTestFS(t),
 	})
 	return &testClient{t: t, h: h, st: st, adminPass: plain}
 }
