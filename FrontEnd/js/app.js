@@ -3,26 +3,28 @@
  * 前端架构文档 01 §4/§5 / 02 §2/§7
  * ============================================================ */
 
-const VIEW_TITLES = {
-  dashboard: '仪表盘',
-  projects: '项目',
-  keys: '密钥管理',
-  audit: '审计日志',
-  password: '修改密码',
-  guide: '使用教程',
-  docs: '对接文档',
-};
+ const VIEW_TITLES = {
+   dashboard: '仪表盘',
+   projects: '项目',
+   keys: '密钥管理',
+   audit: '审计日志',
+   settings: '系统设置',
+   password: '修改密码',
+   guide: '使用教程',
+   docs: '对接文档',
+ };
 
 /** 视图加载函数映射（keys 由 projects.js 进入时设置 currentProject）。 */
-const VIEW_LOADERS = {
-  dashboard: loadDashboard,
-  projects: loadProjects,
-  keys: loadKeys,
-  audit: loadAudit,
-  password: renderPasswordView,
-  guide: loadGuide,
-  docs: loadDocs,
-};
+ const VIEW_LOADERS = {
+   dashboard: loadDashboard,
+   projects: loadProjects,
+   keys: loadKeys,
+   audit: loadAudit,
+   settings: loadSettings,
+   password: renderPasswordView,
+   guide: loadGuide,
+   docs: loadDocs,
+ };
 
 /** 全局轻量状态（01 §5：不引入框架状态库）。 */
 const state = { user: null, currentProject: null };

@@ -561,3 +561,8 @@ table.table {
   .guide-layout { flex-direction: column; }
   .guide-toc { position: static; width: 100%; max-height: none; }
 }
+ /* ---------- 系统设置（need01 01-F019） ---------- */
+ .settings-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+ .settings-row label { width: 110px; flex-shrink: 0; font-size: 13px; color: var(--text-secondary); }
+ .settings-row .form-control { max-width: 160px; }
+ .switch { position: relative; display: inline-block; width: 40px; height: 22px; }

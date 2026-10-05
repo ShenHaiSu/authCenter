@@ -89,15 +89,17 @@ const EVENT_TYPE_LABELS = {
   'project.enable': '启用项目',
   'project.disable': '停用项目',
   'project.delete': '删除项目',
-  'key.create': '生成密钥',
-  'key.update': '更新密钥',
-  'key.enable': '启用密钥',
-  'key.disable': '停用密钥',
-  'key.rotate': '轮换密钥',
-  'key.delete': '吊销密钥',
-  'auth.authenticate': '外部认证成功',
-  'auth.authenticate_failed': '外部认证失败',
-};
+   'key.create': '生成密钥',
+   'key.update': '更新密钥',
+   'key.enable': '启用密钥',
+   'key.disable': '停用密钥',
+   'key.rotate': '轮换密钥',
+   'key.delete': '吊销密钥',
+   'auth.authenticate': '外部认证成功',
+   'auth.authenticate_failed': '外部认证失败',
+   'system.audit_cleanup': '审计清理',
+   'settings.update': '更新设置',
+ };
 
 function eventTypeLabel(t) {
   return EVENT_TYPE_LABELS[t] || t;
