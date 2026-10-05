@@ -101,22 +101,27 @@ var migrations = []string{
 // 目录权限：POSIX 下 chmod 0700；db 文件 0600（文档 06 §8）。
 // Windows 依赖用户目录 ACL，chmod 仅尽力而为。
 func Open(dataDir string) (*sql.DB, error) {
+	db, _, err := OpenWithApplied(dataDir)
+	return db, err
+}
+
+// OpenWithApplied 打开数据库并执行 step 注册表迁移，返回本次实际执行的步骤。
+// 存量库（有表但 user_version=0）首次会空跑 v1 基线并补写版本；幂等可重复执行。
+func OpenWithApplied(dataDir string) (*sql.DB, []AppliedStep, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return nil, fmt.Errorf("创建数据目录失败: %w", err)
+		return nil, nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(dataDir, 0o700)
 	}
-
 	dbPath := filepath.Join(dataDir, DBFileName)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("打开数据库失败: %w", err)
+		return nil, nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 	// 本机单实例：单连接即可规避写锁竞争（文档 03 §6 并发规范）。
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-
 	// PRAGMA（文档 02 §6 启动流程第 3 步）。
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
@@ -126,21 +131,20 @@ func Open(dataDir string) (*sql.DB, error) {
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
 			db.Close()
-			return nil, fmt.Errorf("执行 PRAGMA 失败 %q: %w", p, err)
+			return nil, nil, fmt.Errorf("执行 PRAGMA 失败 %q: %w", p, err)
 		}
 	}
-
 	if runtime.GOOS != "windows" {
 		// WAL 附属文件与 db 同目录，目录 0700 已足够；db 文件尽力 0600。
 		_ = os.Chmod(dbPath, 0o600)
 	}
-
-	// 迁移：启动时顺序执行幂等 DDL（文档 03 §6）。
-	if err := migrate(db); err != nil {
+	// 迁移：step 注册表（need01 06 §3），失败即中止并报错（启动自检，文档 01 §5）。
+	applied, err := applyMigrations(db)
+	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("数据库迁移失败: %w", err)
+		return nil, nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}
-	return db, nil
+	return db, applied, nil
 }
 
 // migrate 顺序执行幂等 DDL；每条语句单独执行，失败即中止并报错（启动自检，文档 01 §5）。

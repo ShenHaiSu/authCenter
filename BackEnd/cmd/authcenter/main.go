@@ -54,12 +54,26 @@ func run() error {
 	logger := newLogger(cfg)
 	logger.Info("AuthCenter 启动", "version", version, "listen", cfg.Listen, "data_dir", cfg.DataDir)
 
-	// 3. 数据库（打开 + PRAGMA + 迁移；失败即退出，启动自检）。
-	db, err := database.Open(cfg.DataDir)
+	// 3. 数据库（打开 + PRAGMA + step 迁移；失败即退出，启动自检；need01 06 §3）。
+	db, applied, err := database.OpenWithApplied(cfg.DataDir)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	curVer, _ := database.SchemaVersion(db)
+	if len(applied) > 0 {
+		names := make([]string, 0, len(applied))
+		for _, a := range applied {
+			names = append(names, a.Name)
+		}
+		logger.Info("schema 迁移完成", "to_version", curVer, "applied", names)
+	} else {
+		logger.Info("schema 无需迁移", "version", curVer)
+	}
+	if cfg.MigrateOnly {
+		logger.Info("migrate-only 完成，仅迁移后退出", "version", curVer)
+		return nil
+	}
 
 	// 4-5. store + system.startup 审计。
 	st := store.New(db)

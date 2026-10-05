@@ -22,12 +22,13 @@ const (
 
 // Config 汇总运行配置。
 type Config struct {
-	Listen    string // 监听地址，需求固定本机 127.0.0.1:53779（C2）
-	DataDir   string // 数据目录（db + auth.log）
-	LogLevel  string // debug/info/warn/error
-	LogFormat string // text/json
-	WebDir    string // 开发模式：从磁盘目录服务前端静态文件；空=不启用
-	JWTSecret string // 来自 env AUTHCENTER_JWT_SECRET，可覆盖 settings 中自动生成值
+	Listen      string // 监听地址，需求固定本机 127.0.0.1:53779（C2）
+	DataDir     string // 数据目录（db + auth.log）
+	LogLevel    string // debug/info/warn/error
+	LogFormat   string // text/json
+	WebDir      string // 开发模式：从磁盘目录服务前端静态文件；空=不启用
+	JWTSecret   string // 来自 env AUTHCENTER_JWT_SECRET，可覆盖 settings 中自动生成值
+	MigrateOnly bool   // 只做迁移与自检后退出，不监听端口（need01 06 §3.4）
 }
 
 // Parse 解析命令行 flag 与环境变量。
@@ -44,6 +45,7 @@ func Parse(args []string) (*Config, error) {
 	fs.StringVar(&cfg.LogLevel, "log-level", DefaultLogLevel, "日志级别 debug/info/warn/error")
 	fs.StringVar(&cfg.LogFormat, "log-format", DefaultLogFmt, "日志格式 text/json")
 	fs.StringVar(&cfg.WebDir, "web-dir", "", "开发模式：从磁盘目录服务前端静态文件（默认内嵌）")
+	fs.BoolVar(&cfg.MigrateOnly, "migrate-only", false, "只执行数据库迁移与自检后退出，不启动 HTTP 服务")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
