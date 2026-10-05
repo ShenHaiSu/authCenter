@@ -4,16 +4,29 @@ package model
 
 import "time"
 
+// 管理员角色常量（F-020：仅两级，细粒度权限列 P3；未知值一律按 admin 处理）。
+const (
+	RoleOwner = "owner" // 超级管理员：可管理管理员账号
+	RoleAdmin = "admin" // 管理员：项目/密钥/审计/改自己密码
+)
+
 // AdminUser 管理员（表 admin_user，见数据库设计文档 03 §2.1）。
+// F-020 新增 role / force_password_change / updated_at（迁移 step admin_user_role）。
 type AdminUser struct {
-	ID           int64      `json:"id"`
-	Username     string     `json:"username"`
-	PasswordHash string     `json:"-"` // 永不出现在任何响应
-	IsActive     bool       `json:"is_active"`
-	CreatedAt    time.Time  `json:"created_at"`
-	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
-	LastLoginIP  string     `json:"last_login_ip,omitempty"`
+	ID                  int64      `json:"id"`
+	Username            string     `json:"username"`
+	PasswordHash        string     `json:"-"` // 永不出现在任何响应
+	Role                string     `json:"role"`
+	IsActive            bool       `json:"is_active"`
+	ForcePasswordChange bool       `json:"force_password_change"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	LastLoginIP         string     `json:"last_login_ip,omitempty"`
 }
+
+// IsOwner 判断是否为超级管理员（读路径统一走角色归一化后的 Role）。
+func (u *AdminUser) IsOwner() bool { return u != nil && u.Role == RoleOwner }
 
 // AdminSession 管理员会话（表 admin_session，见文档 03 §2.2）。
 // 库中只存 token 的 SHA-256，不存明文。
@@ -106,6 +119,13 @@ const (
 	EventAdminLogout         = "admin.logout"
 	EventAdminLoginFailed    = "admin.login_failed"
 	EventAdminPasswordChange = "admin.password_change"
+	// F-020 多管理员与 RBAC 事件（need01 02 §4.6 / 05 §2）。
+	EventAdminCreate        = "admin.create"
+	EventAdminUpdate        = "admin.update"
+	EventAdminEnable        = "admin.enable"
+	EventAdminDisable       = "admin.disable"
+	EventAdminRoleChange    = "admin.role_change"
+	EventAdminPasswordReset = "admin.password_reset"
 
 	EventProjectCreate  = "project.create"
 	EventProjectUpdate  = "project.update"
@@ -149,4 +169,5 @@ const (
 	TargetTypeProject = "project"
 	TargetTypeAPIKey  = "api_key"
 	TargetTypeAudit   = "audit"
+	TargetTypeAdmin   = "admin" // F-020：管理员账号作为审计目标
 )

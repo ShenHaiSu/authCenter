@@ -106,9 +106,27 @@ func LimitBody(next http.Handler) http.Handler {
 	})
 }
 
+// forceChangeAllowedPaths 强制改密期间允许访问的路径白名单（need01 02 §4.2）。
+// 白名单外的任何管理 API 都返回 403：强制改密必须在后端拦截，
+// 只靠前端跳页则攻击者拿到 cookie 可直接打 API，改密形同虚设。
+var forceChangeAllowedPaths = map[string]bool{
+	"/api/v1/admin/me":       true,
+	"/api/v1/admin/logout":   true,
+	"/api/v1/admin/password": true,
+	"/healthz":               true,
+}
+
+// forceChangeAllowed 判断该路径是否在强制改密白名单内。
+func forceChangeAllowed(path string) bool { return forceChangeAllowedPaths[path] }
+
 // RequireAdmin 会话鉴权中间件（文档 04 §3.4 / 06 §3.2）：
-// 读 auth_session cookie → SHA-256 查会话 → 过期校验 → 注入当前用户与会话到 context。
-// 失败返回 401/20103（文档 05 §2）。静态资源路径不挂（router 装配处控制）。
+// 读 auth_session cookie → SHA-256 查会话 → 过期校验 → **按 sess.AdminUserID 取用户**
+// → 账号启用校验（停用即刻吊销其全部会话）→ 强制改密拦截 → 注入当前用户与会话到 context。
+// 失败返回 401/20103（会话）或 401/20102（停用）/403/20104（强制改密）。
+// 静态资源路径不挂（router 装配处控制）。
+//
+// F-020：原实现按固定用户名 "admin" 取用户，多账号下会把所有会话都解析成 admin，
+// 导致 is_active 与角色判断全部失真——此处改为按会话归属取人（need01 02 §2 P0 必改项）。
 func RequireAdmin(st *store.Store) func(func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -133,19 +151,46 @@ func RequireAdmin(st *store.Store) func(func(http.ResponseWriter, *http.Request)
 				fail(w, http.StatusUnauthorized, CodeSessionExpired, "会话缺失或过期")
 				return
 			}
-			user, err := st.GetAdminByUsername(r.Context(), "admin")
+			// F-020：按会话归属取当前管理员（会话行已记录 admin_user_id）。
+			// 原实现按固定用户名 "admin" 取人，多账号下会把所有会话都解析成 admin。
+			user, err := st.GetAdminByID(r.Context(), sess.AdminUserID)
 			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					// 会话指向的用户已不存在（被删/库被换）→ 视为会话失效。
+					_ = st.DeleteSession(r.Context(), sess.ID)
+					fail(w, http.StatusUnauthorized, CodeSessionExpired, "会话缺失或过期")
+					return
+				}
 				failService(w, err)
 				return
 			}
 			if !user.IsActive {
+				// 停用即刻失效：顺带吊销其全部会话（不只拦当前请求）。
+				_ = st.DeleteSessionsByUser(r.Context(), user.ID)
 				fail(w, http.StatusUnauthorized, CodeAccountDisabled, "账号已停用")
+				return
+			}
+			if user.ForcePasswordChange && !forceChangeAllowed(r.URL.Path) {
+				// 强制改密拦截：仅放行白名单路径（改密/登出/查自己/healthz）。
+				fail(w, http.StatusForbidden, CodeForbidden, "请先修改初始密码")
 				return
 			}
 			ctx := context.WithValue(r.Context(), ctxKeyUser, user)
 			ctx = context.WithValue(ctx, ctxKeySession, sess)
 			next(w, r.WithContext(ctx))
 		}
+	}
+}
+
+// requireOwner 要求当前会话用户角色为 owner（F-020：管理员账号管理仅 owner 可操作）。
+// 必须挂在 RequireAdmin 之后：requireAdmin(requireOwner(handler))，见 router.go 装配。
+func requireOwner(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if u := currentUser(r); u == nil || u.Role != model.RoleOwner {
+			fail(w, http.StatusForbidden, CodeForbidden, "仅超级管理员可执行此操作")
+			return
+		}
+		next(w, r)
 	}
 }
 

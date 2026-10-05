@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/authcenter/authcenter/internal/model"
 	"github.com/authcenter/authcenter/internal/service"
 )
 
@@ -15,6 +16,22 @@ type adminHandlers struct {
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// adminUserJSON 当前用户的响应投影（F-020 §5.5：新增 id/role/force_password_change/updated_at，
+// 供前端顶栏角色徽章与导航按角色隐藏使用）。不返回密码哈希。
+func adminUserJSON(u *model.AdminUser) map[string]any {
+	return map[string]any{
+		"id":                    u.ID,
+		"username":              u.Username,
+		"role":                  u.Role,
+		"is_active":             u.IsActive,
+		"force_password_change": u.ForcePasswordChange,
+		"created_at":            u.CreatedAt,
+		"updated_at":            u.UpdatedAt,
+		"last_login_at":         u.LastLoginAt,
+		"last_login_ip":         u.LastLoginIP,
+	}
 }
 
 // handleLogin POST /api/v1/admin/login：成功 Set-Cookie auth_session + 审计 admin.login。
@@ -40,14 +57,7 @@ func (h *adminHandlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   7 * 24 * 3600, // 7 天（文档 06 §3.2）
 	})
-	ok(w, map[string]any{
-		"user": map[string]any{
-			"username":      user.Username,
-			"created_at":    user.CreatedAt,
-			"last_login_at": user.LastLoginAt,
-			"last_login_ip": user.LastLoginIP,
-		},
-	})
+	ok(w, map[string]any{"user": adminUserJSON(user)})
 }
 
 // handleLogout POST /api/v1/admin/logout：删除会话 + 清 cookie + 审计 admin.logout。
@@ -68,16 +78,10 @@ func (h *adminHandlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	ok(w, nil)
 }
 
-// handleMe GET /api/v1/admin/me：返回当前用户。
+// handleMe GET /api/v1/admin/me：返回当前用户（F-020：含 id/role/force_password_change）。
 func (h *adminHandlers) handleMe(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
-	ok(w, map[string]any{
-		"user": map[string]any{
-			"username":      user.Username,
-			"created_at":    user.CreatedAt,
-			"last_login_at": user.LastLoginAt,
-		},
-	})
+	ok(w, map[string]any{"user": adminUserJSON(user)})
 }
 
 // changePasswordRequest 改密请求（05 §4.1；新密码 ≥12 位含字母数字）。

@@ -65,7 +65,11 @@ func (s *AdminService) EnsureAdmin(ctx context.Context) (created bool, plainPass
 	admin := &model.AdminUser{
 		Username:     "admin",
 		PasswordHash: hash,
-		CreatedAt:    timeNowUTC(),
+		// F-020：初始账号直接落 role=owner，否则迁移回填在其之后跑（EnsureAdmin 在
+		// database.Open 之后执行），新装库将没有任何 owner 可管理管理员。
+		Role:      model.RoleOwner,
+		IsActive:  true,
+		CreatedAt: timeNowUTC(),
 	}
 	if err := s.store.CreateAdmin(ctx, admin); err != nil {
 		return false, "", err

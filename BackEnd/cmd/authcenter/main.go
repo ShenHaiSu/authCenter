@@ -137,6 +137,9 @@ func run() error {
 	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
 	retentionSvc.SyncInterval(auditCtx)
 	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
+	// M9：F-020 多管理员与 RBAC 的账号管理服务（owner 可增/停/启/改角色/重置密码）。
+	// owner 回填不在此处调用——由迁移 step admin_user_role 承担（need01 02 §3.2/§4.7）。
+	adminUserSvc := service.NewAdminUserService(st, auditSvc, logger)
 	// 8. HTTP 服务（C2：仅 127.0.0.1:53779；超时参数见文档 02 §8）。
 	//    前端资源：-web-dir 开发模式读磁盘（改文件即刷新），否则用 go:embed 内嵌（07 §2.3）。
 	var webFS fs.FS
@@ -164,6 +167,7 @@ func run() error {
 			Stats:     statsSvc,
 			Settings:  settingsSvc,
 			Retention: retentionSvc,
+			Admins:    adminUserSvc,
 			Runner:    maint,
 			WebFS:     webFS,
 		}),

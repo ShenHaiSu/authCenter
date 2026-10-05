@@ -22,6 +22,7 @@ type RouterDeps struct {
 	Stats     *service.StatsService
 	Settings  *service.SettingsService
 	Retention *service.AuditRetentionService
+	Admins    *service.AdminUserService
 	Runner    *service.MaintenanceRunner
 	// WebFS 前端静态资源树（已剥离目录前缀）。nil = 使用 go:embed 内嵌
 	// （发布二进制；开发模式由 main 注入 os.DirFS，文档 07 §2.3）。
@@ -46,6 +47,19 @@ func New(deps RouterDeps) http.Handler {
 	requireAdmin := RequireAdmin(deps.Store)
 	mux.HandleFunc("POST /api/v1/admin/logout", requireAdmin(hAdmin.handleLogout))
 	mux.HandleFunc("GET /api/v1/admin/me", requireAdmin(hAdmin.handleMe))
+
+	// 管理员账号管理（F-020 need01 02 §5）：全部需 **owner**。
+	// requireOwner 挂在 RequireAdmin 之后：RequireAdmin 先解析会话归属与角色，再判 owner。
+	if deps.Admins != nil {
+		hAdmins := &adminUserHandlers{admins: deps.Admins}
+		requireOwner := func(h func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+			return requireAdmin(requireOwner(h))
+		}
+		mux.HandleFunc("GET /api/v1/admins", requireOwner(hAdmins.handleListAdmins))
+		mux.HandleFunc("POST /api/v1/admins", requireOwner(hAdmins.handleCreateAdmin))
+		mux.HandleFunc("PUT /api/v1/admins/{id}", requireOwner(hAdmins.handleUpdateAdmin))
+		mux.HandleFunc("PUT /api/v1/admins/{id}/password", requireOwner(hAdmins.handleResetAdminPassword))
+	}
 	mux.HandleFunc("PUT /api/v1/admin/password", requireAdmin(hAdmin.handleChangePassword))
 
 	// 项目（05 §4.2）。

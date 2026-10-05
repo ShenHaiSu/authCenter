@@ -162,9 +162,10 @@ func (s *SessionService) ChangePassword(ctx context.Context, user *model.AdminUs
 	if err != nil {
 		return err
 	}
-	if _, err := s.store.DB().ExecContext(ctx,
-		`UPDATE admin_user SET password_hash = ? WHERE id = ?`, hash, user.ID); err != nil {
-		return fmt.Errorf("更新密码失败: %w", err)
+	// F-020：改密成功同时清 force_password_change，否则被 owner 重置密码的用户
+	// 改完自己的密码后仍会被 RequireAdmin 的强制改密拦截挡住（死循环）。
+	if err := s.store.UpdateAdminPassword(ctx, user.ID, hash, false); err != nil {
+		return err
 	}
 	if err := s.store.DeleteSessionsByUser(ctx, user.ID); err != nil {
 		return err

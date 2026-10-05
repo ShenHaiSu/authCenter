@@ -64,6 +64,8 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 	authSvc := service.NewAuthService(ctx, st, auditSvc, tokenSvc, logger)
 	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
 	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
+	// F-020：多管理员与 RBAC 的账号管理服务。
+	adminUserSvc := service.NewAdminUserService(st, auditSvc, logger)
 	maint := service.NewMaintenanceRunner(st, auditSvc, logger)
 	maint.Register(retentionSvc)
 	h := New(RouterDeps{
@@ -77,6 +79,7 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 		Stats:     service.NewStatsService(st),
 		Settings:  settingsSvc,
 		Retention: retentionSvc,
+		Admins:    adminUserSvc,
 		Runner:    maint,
 		WebFS:     frontEndTestFS(t),
 	})
