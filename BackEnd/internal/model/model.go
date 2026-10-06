@@ -59,7 +59,9 @@ type APIKey struct {
 	ID          int64      `json:"id"`
 	ProjectID   int64      `json:"project_id"`
 	Name        string     `json:"name"`        // 备注/用途
-	KeyValue    string     `json:"-"`           // 密钥明文，响应中永不输出
+	KeyValue    string     `json:"-"`           // 模式 0=明文；模式 1=base64(nonce‖ct‖tag)
+	KeyValueEnc int        `json:"-"`           // 0=明文 1=AES-256-GCM-v1（不外泄实现细节）
+	KeyHash     string     `json:"-"`           // hex(SHA-256(明文密钥))，认证查询索引
 	Fingerprint *string    `json:"fingerprint"` // 绑定指纹，NULL=不绑定
 	ExpiresAt   *time.Time `json:"expires_at"`  // NULL=永不过期
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
@@ -89,6 +91,29 @@ const (
 	SettingAuditMinKeepRows          = "audit_min_keep_rows"
 	SettingAuditLastCleanupAt        = "audit_last_cleanup_at"
 	SettingAuditLastCleanupRows      = "audit_last_cleanup_rows"
+	// F-021 密钥存储加密 settings 键（need01 03 §4.8，键表见 05 §1）。
+	SettingKeyEncryptionEnabled  = "key_encryption_enabled"
+	SettingKeyEncryptionVersion  = "key_encryption_version"
+	SettingKeyEncryptedCount     = "key_encrypted_count"
+	SettingKeyHashBackfillState  = "key_hash_backfill_state"
+	SettingKeyHashBackfillDoneAt = "key_hash_backfill_done_at"
+	// SettingKeyEncryptionCheck 主密钥自检密文（系统维护，F-021 §4.7 规则 3）。
+	// 内容为「已知明文」的 AES-GCM 密文，用于启动期验证主密钥是否与库中密文匹配。
+	SettingKeyEncryptionCheck = "key_encryption_check"
+)
+
+// 密钥存储加密相关常量（need01 03 §4.3 / §4.8）。
+const (
+	// KeyEncVersion 当前密文格式版本，写入 settings.key_encryption_version。
+	KeyEncVersion = "aes-256-gcm-v1"
+	// KeyEncPlain 明文模式（key_value 存明文）。
+	KeyEncPlain = 0
+	// KeyEncGCM AES-256-GCM 密文模式（key_value 存 base64(nonce‖ct‖tag)）。
+	KeyEncGCM = 1
+	// BackfillPending / BackfillRunning / BackfillDone key_hash 回填状态取值（05 §1）。
+	BackfillPending = "pending"
+	BackfillRunning = "running"
+	BackfillDone    = "done"
 )
 
 // AuditLog 审计日志（表 audit_log，见文档 03 §2.5）。
@@ -147,6 +172,9 @@ const (
 	EventSettingsUpdate     = "settings.update"
 	// 基础设施：schema 迁移事件（need01 06 §9 步骤 5）。
 	EventSystemSchemaMigrated = "system.schema_migrated"
+	// F-021 密钥存储加密事件（need01 03 §4.7 / 05 §2）。
+	EventSystemKeyEncryptionMigrated     = "system.key_encryption_migrated"
+	EventSystemKeyEncryptionVerifyFailed = "system.key_encryption_verify_failed"
 )
 
 // 审计结果常量。

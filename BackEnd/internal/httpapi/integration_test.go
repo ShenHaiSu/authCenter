@@ -26,11 +26,22 @@ type testClient struct {
 	st        *store.Store
 	adminPass string // admin 初始密码（EnsureAdmin 首次生成后保存）
 	cookie    string // auth_session cookie（登录后）
+	// F-021：密钥存储加密测试需要直接驱动后台任务与服务。
+	maint    *service.MaintenanceRunner
+	backfill *service.KeyHashBackfillService
+	settings *service.SettingsService
+	apikeys  *service.ApiKeyService
 }
 
-// newTestClient 构建测试环境：临时 SQLite + 全部 service + 初始化 admin。
+// newTestClient 构建测试环境（明文模式：未配置主密钥）。
 // setSettings 可选：在构造 service 前写入 settings（如限流阈值、require_fingerprint）。
 func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Store)) *testClient {
+	return newTestClientWithCipher(t, nil, setSettings...)
+}
+
+// newTestClientWithCipher 构建测试环境并注入 Cipher（F-021：加密模式端到端测试）；
+// cipher 为 nil 时等同明文模式。
+func newTestClientWithCipher(t *testing.T, keyCipher service.Cipher, setSettings ...func(context.Context, *store.Store)) *testClient {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := database.Open(dir)
@@ -43,7 +54,7 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 	auditSvc := service.NewAuditService(st, logger)
 	sessionSvc := service.NewSessionService(st, logger)
 	projectSvc := service.NewProjectService(st, auditSvc)
-	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, 7)
+	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, 7, keyCipher)
 	adminSvc := service.NewAdminService(st, logger, dir)
 	_, plain, err := adminSvc.EnsureAdmin(context.Background())
 	if err != nil {
@@ -61,13 +72,17 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 	if err != nil {
 		t.Fatalf("NewTokenService 失败: %v", err)
 	}
-	authSvc := service.NewAuthService(ctx, st, auditSvc, tokenSvc, logger)
-	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
+	authSvc := service.NewAuthService(ctx, st, auditSvc, tokenSvc, logger, apikeySvc)
+	settingsSvc := service.NewSettingsServiceWithCipher(st, auditSvc, logger, keyCipher)
 	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
 	// F-020：多管理员与 RBAC 的账号管理服务。
 	adminUserSvc := service.NewAdminUserService(st, auditSvc, logger)
 	maint := service.NewMaintenanceRunner(st, auditSvc, logger)
 	maint.Register(retentionSvc)
+	// F-021：key_hash 回填任务（Interval=0，测试中显式 RunNow 驱动）。
+	backfillSvc := service.NewKeyHashBackfillService(st, auditSvc, logger)
+	backfillSvc.SetOnDone(apikeySvc.InvalidateBackfillCache)
+	maint.Register(backfillSvc)
 	h := New(RouterDeps{
 		Logger:    logger,
 		Store:     st,
@@ -83,7 +98,10 @@ func newTestClient(t *testing.T, setSettings ...func(context.Context, *store.Sto
 		Runner:    maint,
 		WebFS:     frontEndTestFS(t),
 	})
-	return &testClient{t: t, h: h, st: st, adminPass: plain}
+	return &testClient{
+		t: t, h: h, st: st, adminPass: plain,
+		maint: maint, backfill: backfillSvc, settings: settingsSvc, apikeys: apikeySvc,
+	}
 }
 
 // adminPassword 返回 admin 初始密码（EnsureAdmin 首次生成时保存）。

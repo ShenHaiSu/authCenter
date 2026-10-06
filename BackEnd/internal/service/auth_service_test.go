@@ -48,7 +48,7 @@ func newAuthTestEnv(t *testing.T, setSettings func(context.Context, *store.Store
 	if err != nil {
 		t.Fatalf("NewTokenService 失败: %v", err)
 	}
-	svc := NewAuthService(ctx, st, audit, tokenSvc, logger)
+	svc := NewAuthService(ctx, st, audit, tokenSvc, logger, nil)
 
 	now := timeNowUTC()
 	p := &model.Project{Name: "svc-test", CurrentVersion: "1.2.3", IsActive: true, CreatedAt: now, UpdatedAt: now}

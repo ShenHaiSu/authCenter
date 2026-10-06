@@ -54,10 +54,12 @@ type AuthResult struct {
 }
 
 // AuthService 外部认证业务（文档 04 §3.2 校验链 + 06 §7 限流 + D2 审计）。
+// F-021：密钥查询改走 apikeys.KeyForAuth（hash 索引 + 解包比对，need01 03 §4.4）。
 type AuthService struct {
 	store              *store.Store
 	audit              *AuditService
 	tokens             *TokenService
+	apikeys            *ApiKeyService
 	logger             *slog.Logger
 	limiter            *authLimiter
 	requireFingerprint bool // settings.require_fingerprint=1 时未绑定指纹的密钥一律拒绝
@@ -68,7 +70,8 @@ type AuthService struct {
 
 // NewAuthService 构造 AuthService：读取 settings
 // （rate_limit_auth_per_min 默认 100、require_fingerprint 默认 0）。
-func NewAuthService(ctx context.Context, st *store.Store, audit *AuditService, tokens *TokenService, logger *slog.Logger) *AuthService {
+// apikeys 为 nil 时退化为明文直查（仅测试/极端装配场景），生产装配恒非 nil。
+func NewAuthService(ctx context.Context, st *store.Store, audit *AuditService, tokens *TokenService, logger *slog.Logger, apikeys *ApiKeyService) *AuthService {
 	perMin := DefaultAuthRatePerMin
 	if v, err := st.GetSetting(ctx, model.SettingRateLimitAuthPerMin); err == nil && v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -83,6 +86,7 @@ func NewAuthService(ctx context.Context, st *store.Store, audit *AuditService, t
 		store:              st,
 		audit:              audit,
 		tokens:             tokens,
+		apikeys:            apikeys,
 		logger:             logger,
 		limiter:            newAuthLimiter(perMin),
 		requireFingerprint: requireFp,
@@ -96,7 +100,7 @@ func NewAuthService(ctx context.Context, st *store.Store, audit *AuditService, t
 //  2. GetProjectByName                        → project_not_found
 //  3. project.IsActive                        → project_disabled
 //  4. 版本校验 min_version 语义化比较          → version_too_old
-//  5. GetKeyByValue                           → key_not_found
+//  5. KeyForAuth（hash 索引 + 解包比对）              → key_not_found
 //  6. key.ProjectID == project.ID             → key_not_found（对外不区分，detail 记 key_mismatch）
 //  7. key.IsActive                            → key_disabled
 //  8. key.ExpiresAt 未过期（NULL 永不过期）    → key_expired
@@ -136,7 +140,7 @@ func (s *AuthService) Authenticate(ctx context.Context, req AuthenticateRequest,
 	}
 
 	// 5-8. 密钥存在、属于该项目、启用、未过期。
-	key, err := s.store.GetKeyByValue(ctx, req.Key)
+	key, err := s.keyForAuth(ctx, req.Key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.writeFailAudit(ctx, "key_not_found", req, ip)
@@ -256,4 +260,13 @@ func (l *authLimiter) Allow(ip string) bool {
 		l.limiters[ip] = lim
 	}
 	return lim.Allow()
+}
+
+// keyForAuth 认证取密钥：优先走 ApiKeyService.KeyForAuth（F-021：hash 索引 + 解包比对）；
+// apikeys 未装配（测试/极端场景）时退化为旧的明文等值查询，语义一致。
+func (s *AuthService) keyForAuth(ctx context.Context, plainKey string) (*model.APIKey, error) {
+	if s.apikeys != nil {
+		return s.apikeys.KeyForAuth(ctx, plainKey)
+	}
+	return s.store.GetKeyByValuePlain(ctx, plainKey)
 }

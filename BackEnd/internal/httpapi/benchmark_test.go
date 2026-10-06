@@ -57,7 +57,7 @@ func benchRouter() http.Handler {
 	auditSvc := service.NewAuditService(st, logger)
 	sessionSvc := service.NewSessionService(st, logger)
 	projectSvc := service.NewProjectService(st, auditSvc)
-	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, 7)
+	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, 7, nil)
 	return New(RouterDeps{
 		Logger:   logger,
 		Store:    st,

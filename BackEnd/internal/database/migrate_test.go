@@ -54,11 +54,17 @@ func TestAdminUserRoleMigrationFreshDB(t *testing.T) {
 			t.Errorf("全新库 admin_user 应有列 %s", col)
 		}
 	}
+	// F-021（v3）：api_key 两列也应就位。
+	for _, col := range []string{"key_hash", "key_value_enc"} {
+		if !columnExists(t, db, "api_key", col) {
+			t.Errorf("全新库 api_key 应有列 %s", col)
+		}
+	}
 	if got := userVersion(t, db); got != targetSchemaVersion() {
 		t.Errorf("user_version = %d, 期望 target %d", got, targetSchemaVersion())
 	}
-	if len(applied) != 2 || applied[1].Name != "admin_user_role" {
-		t.Errorf("本次应执行 baseline_tables + admin_user_role, 实际 %+v", applied)
+	if len(applied) != 3 || applied[1].Name != "admin_user_role" || applied[2].Name != "api_key_hash" {
+		t.Errorf("本次应执行 baseline_tables + admin_user_role + api_key_hash, 实际 %+v", applied)
 	}
 
 	// 二次打开：applied 为空，版本不变（幂等）。
@@ -125,7 +131,7 @@ func TestLegacyAdminBackfillOnStart(t *testing.T) {
 	if role != "owner" {
 		t.Errorf("存量 admin 的 role = %q, 期望回填为 owner", role)
 	}
-	if len(applied) == 0 || applied[len(applied)-1].Name != "admin_user_role" {
+	if !hasAppliedStep(applied, "admin_user_role") {
 		t.Errorf("应执行 admin_user_role 迁移, 实际 %+v", applied)
 	}
 	// 其余两列也应就位。
@@ -250,6 +256,118 @@ func TestRefuseDowngradeBinary(t *testing.T) {
 	}
 }
 
+// legacyApiKeyDDL 存量库（v1 基线，无 F-021 两列）的 api_key 建表语句。
+const legacyApiKeyDDL = `CREATE TABLE api_key (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id     INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+	name           TEXT    NOT NULL DEFAULT '',
+	key_value      TEXT    NOT NULL,
+	fingerprint    TEXT,
+	expires_at     TEXT,
+	last_used_at   TEXT,
+	last_used_ip   TEXT,
+	is_active      INTEGER NOT NULL DEFAULT 1,
+	created_by     TEXT    NOT NULL DEFAULT 'admin',
+	created_at     TEXT    NOT NULL
+)`
+
+// TestApiKeyHashMigration F-021（v3）核心回归：
+// 存量库（有 api_key 行、无两列）→ 迁移后两列就位、key_hash 仍为 NULL（回填由后台 job 承担）、
+// key_value_enc 默认 0（明文模式）；再次启动幂等（不重复执行 step）。
+func TestApiKeyHashMigration(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, DBFileName)
+
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("打开存量库失败: %v", err)
+	}
+	if _, err := legacy.Exec(legacyApiKeyDDL); err != nil {
+		t.Fatalf("创建存量 api_key 失败: %v", err)
+	}
+	if _, err := legacy.Exec(
+		`INSERT INTO api_key (project_id, name, key_value, is_active, created_at)
+		 VALUES (1, 'legacy', 'LEGACY-PLAIN-KEY', 1, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("插入存量密钥失败: %v", err)
+	}
+	if columnExists(t, legacy, "api_key", "key_hash") {
+		t.Fatal("迁移前的存量库不应有 key_hash 列")
+	}
+	legacy.Close()
+
+	db, applied, err := OpenWithApplied(dir)
+	if err != nil {
+		t.Fatalf("迁移存量库失败: %v", err)
+	}
+	if !hasAppliedStep(applied, "api_key_hash") {
+		t.Errorf("应执行 api_key_hash 迁移, 实际 %+v", applied)
+	}
+	for _, col := range []string{"key_hash", "key_value_enc"} {
+		if !columnExists(t, db, "api_key", col) {
+			t.Errorf("迁移后 api_key 应有列 %s", col)
+		}
+	}
+	// 启动路径不回填 key_hash（《06》§4：由后台 job 分批完成）。
+	var hash sql.NullString
+	var enc int
+	if err := db.QueryRow(`SELECT key_hash, key_value_enc FROM api_key WHERE name = 'legacy'`).
+		Scan(&hash, &enc); err != nil {
+		t.Fatal(err)
+	}
+	if hash.Valid {
+		t.Errorf("启动迁移不应回填 key_hash, 实际 %q", hash.String)
+	}
+	if enc != 0 {
+		t.Errorf("存量行 key_value_enc = %d, 期望默认 0（明文）", enc)
+	}
+	// 唯一索引存在且允许多行 NULL（先补一条 project 满足外键）。
+	if _, err := db.Exec(
+		`INSERT INTO project (name, description, current_version, is_active, created_at, updated_at)
+		 VALUES ('legacy-proj', '', '1.0.0', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("插入项目失败: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO api_key (project_id, name, key_value, is_active, created_at)
+		 VALUES (1, 'legacy2', 'LEGACY-PLAIN-KEY-2', 1, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("key_hash 为 NULL 的多行应可共存（唯一索引允许多 NULL）: %v", err)
+	}
+
+	db.Close()
+	db2, applied2, err := OpenWithApplied(dir)
+	if err != nil {
+		t.Fatalf("二次迁移失败: %v", err)
+	}
+	defer db2.Close()
+	if len(applied2) != 0 {
+		t.Errorf("二次启动不应执行 step, 实际 %+v", applied2)
+	}
+}
+
+// TestKeyHashUniqueIndexEnforced key_hash 唯一索引生效：重复非 NULL hash 被拒。
+func TestKeyHashUniqueIndexEnforced(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open 失败: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(
+		`INSERT INTO project (name, description, current_version, is_active, created_at, updated_at)
+		 VALUES ('p1', '', '1.0.0', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("插入项目失败: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO api_key (project_id, name, key_value, key_hash, key_value_enc, is_active, created_at)
+		 VALUES (1, 'a', 'ct-1', 'deadbeef', 1, 1, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("插入第一条失败: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO api_key (project_id, name, key_value, key_hash, key_value_enc, is_active, created_at)
+		 VALUES (1, 'b', 'ct-2', 'deadbeef', 1, 1, '2026-01-01T00:00:00Z')`); err == nil {
+		t.Error("重复 key_hash 应被唯一索引拒绝")
+	}
+}
+
 // itoa 避免为一个数字引入 strconv（仅测试用）。
 func itoa(n int) string {
 	if n == 0 {
@@ -269,6 +387,16 @@ func itoa(n int) string {
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAppliedStep 判断本次执行的步骤列表中是否包含指定名称的 step。
+func hasAppliedStep(applied []AppliedStep, name string) bool {
+	for _, a := range applied {
+		if a.Name == name {
 			return true
 		}
 	}

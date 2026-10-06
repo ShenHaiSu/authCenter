@@ -26,6 +26,7 @@ type AppliedStep struct {
 var migrationSteps = []step{
 	{Version: 1, Name: "baseline_tables", Up: upBaselineTables},
 	{Version: 2, Name: "admin_user_role", Up: upAdminUserRole},
+	{Version: 3, Name: "api_key_hash", Up: upApiKeyHashColumns},
 }
 
 // targetSchemaVersion 当前二进制期望的 schema 版本（= 最高注册版本）。
@@ -67,6 +68,29 @@ func upAdminUserRole(db *sql.DB) error {
 	if _, err := db.Exec(
 		`UPDATE admin_user SET role = 'owner' WHERE username = 'admin' AND role IS NOT 'owner'`); err != nil {
 		return fmt.Errorf("回填初始账号 admin 为 owner 失败: %w", err)
+	}
+	return nil
+}
+
+// upApiKeyHashColumns F-021（M8）：api_key 新增 key_hash / key_value_enc 两列
+// （幂等 ensureColumn）与 key_hash 唯一索引。
+//
+// 设计要点（need01 03 §3.1）：
+//   - key_hash 可空：存量行由后台 job 分批回填（不在启动路径上，见《06》§4）；
+//   - key_value_enc NOT NULL DEFAULT 0：0=明文（key_value 存明文）、1=AES-256-GCM 密文；
+//   - 唯一索引允许多行 NULL，因此「先建索引后回填」安全（《06》§7）。
+func upApiKeyHashColumns(db *sql.DB) error {
+	cols := []struct{ def, name string }{
+		{"key_hash TEXT", "key_hash"},
+		{"key_value_enc INTEGER NOT NULL DEFAULT 0", "key_value_enc"},
+	}
+	for _, c := range cols {
+		if err := ensureColumn(db, "api_key", c.def, c.name); err != nil {
+			return err
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_key_hash ON api_key(key_hash)`); err != nil {
+		return fmt.Errorf("创建 key_hash 唯一索引失败: %w", err)
 	}
 	return nil
 }

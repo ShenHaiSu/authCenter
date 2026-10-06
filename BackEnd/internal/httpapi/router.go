@@ -94,6 +94,8 @@ func New(deps RouterDeps) http.Handler {
 		mux.HandleFunc("PUT /api/v1/settings", requireAdmin(hSettings.handleUpdateSettings))
 		mux.HandleFunc("POST /api/v1/settings/audit/cleanup-now", requireAdmin(hSettings.handleCleanupNow))
 		mux.HandleFunc("POST /api/v1/settings/audit/checkpoint", requireAdmin(hSettings.handleCheckpoint))
+		// F-021：启用密钥存储加密（破坏性，只提供启用；前端走 confirmAction 二次确认）。
+		mux.HandleFunc("POST /api/v1/settings/key-encryption/enable", requireAdmin(hSettings.handleEnableKeyEncryption))
 	}
 
 	// 前端静态资源（M4：内嵌 web 或 -web-dir 磁盘目录，文档 07 §2）。

@@ -139,7 +139,7 @@ func BenchmarkAuthenticateSuccess(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	svc := NewAuthService(ctx, st, audit, tokenSvc, logger)
+	svc := NewAuthService(ctx, st, audit, tokenSvc, logger, nil)
 
 	now := timeNowUTC()
 	p := &model.Project{Name: "bench", CurrentVersion: "1.0.0", IsActive: true, CreatedAt: now, UpdatedAt: now}
@@ -161,6 +161,176 @@ func BenchmarkAuthenticateSuccess(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := svc.Authenticate(ctx, req, "127.0.0.1"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// ================= F-021 密钥存储加密基准（need01 03 §7.3 / 05 §6） =================
+
+// benchCipher 构造 GCM Cipher（基准共用）。
+func benchCipher(b *testing.B) Cipher {
+	b.Helper()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 7)
+	}
+	c, err := NewGCMCipher(key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return c
+}
+
+// BenchmarkCipherSeal AES-256-GCM 加密单条 40 位密钥（预算 < 2 µs/op）。
+func BenchmarkCipherSeal(b *testing.B) {
+	c := benchCipher(b)
+	plain := "AbCdEf0123456789AbCdEf0123456789AbCdEf01"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := c.Seal(plain); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkCipherOpen AES-256-GCM 解密单条密钥（预算 < 2 µs/op）。
+func BenchmarkCipherOpen(b *testing.B) {
+	c := benchCipher(b)
+	plain := "AbCdEf0123456789AbCdEf0123456789AbCdEf01"
+	ct, err := c.Seal(plain)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := c.Open(ct, plain); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkHashKey SHA-256 认证索引计算（认证主路径每次请求一次）。
+func BenchmarkHashKey(b *testing.B) {
+	plain := "AbCdEf0123456789AbCdEf0123456789AbCdEf01"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = HashKey(plain)
+	}
+}
+
+// BenchmarkAuthenticateEncryptedSuccess 认证主路径（加密模式：hash 索引查询 + 解密比对 +
+// 审计写入）。M6 基线 1.85 ms/op，F-021 预算 ≤ 2.2 ms/op（need01 05 §6）。
+func BenchmarkAuthenticateEncryptedSuccess(b *testing.B) {
+	dir := b.TempDir()
+	db, err := database.Open(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	st := store.New(db)
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, model.SettingJWTSecret, "bench-secret-0123456789abcdef"); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, model.SettingRateLimitAuthPerMin, "1000000"); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, model.SettingKeyHashBackfillState, model.BackfillDone); err != nil {
+		b.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	audit := NewAuditService(st, logger)
+	tokenSvc, err := NewTokenService(ctx, st)
+	if err != nil {
+		b.Fatal(err)
+	}
+	c := benchCipher(b)
+	projects := NewProjectService(st, audit)
+	apikeys := NewApiKeyService(st, audit, projects, 7, c)
+	svc := NewAuthService(ctx, st, audit, tokenSvc, logger, apikeys)
+
+	now := timeNowUTC()
+	p := &model.Project{Name: "bench-enc", CurrentVersion: "1.0.0", IsActive: true, CreatedAt: now, UpdatedAt: now}
+	pid, err := st.CreateProject(ctx, p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	plain, err := RandomString(KeyValueLen)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ct, err := c.Seal(plain)
+	if err != nil {
+		b.Fatal(err)
+	}
+	k := &model.APIKey{
+		ProjectID: pid, Name: "k1", KeyValue: ct, KeyValueEnc: model.KeyEncGCM,
+		KeyHash: HashKey(plain), IsActive: true, CreatedAt: now,
+	}
+	if _, err := st.CreateKey(ctx, k); err != nil {
+		b.Fatal(err)
+	}
+	req := AuthenticateRequest{ProjectName: "bench-enc", Version: "1.0.0", Fingerprint: "fp-bench", Key: plain}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := svc.Authenticate(ctx, req, "127.0.0.1"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkAuthLookupByHash 认证取密钥的 hash 索引路径（M6 基线 37.4 µs/op，
+// F-021 预算 ≤ 60 µs/op；含 AES-GCM 解密与恒定时间比对）。
+func BenchmarkAuthLookupByHash(b *testing.B) {
+	dir := b.TempDir()
+	db, err := database.Open(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	st := store.New(db)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	audit := NewAuditService(st, logger)
+	c := benchCipher(b)
+	projects := NewProjectService(st, audit)
+	apikeys := NewApiKeyService(st, audit, projects, 7, c)
+	if err := st.SetSetting(ctx, model.SettingKeyHashBackfillState, model.BackfillDone); err != nil {
+		b.Fatal(err)
+	}
+
+	now := timeNowUTC()
+	p := &model.Project{Name: "bench-hash", CurrentVersion: "1.0.0", IsActive: true, CreatedAt: now, UpdatedAt: now}
+	pid, err := st.CreateProject(ctx, p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	plain, err := RandomString(KeyValueLen)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ct, err := c.Seal(plain)
+	if err != nil {
+		b.Fatal(err)
+	}
+	k := &model.APIKey{
+		ProjectID: pid, Name: "k1", KeyValue: ct, KeyValueEnc: model.KeyEncGCM,
+		KeyHash: HashKey(plain), IsActive: true, CreatedAt: now,
+	}
+	if _, err := st.CreateKey(ctx, k); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := apikeys.KeyForAuth(ctx, plain); err != nil {
 			b.Fatal(err)
 		}
 	}

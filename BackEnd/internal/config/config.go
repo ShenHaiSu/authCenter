@@ -18,6 +18,9 @@ const (
 
 	// EnvJWTSecret 用于覆盖 settings.jwt_secret（备份恢复场景必需）。
 	EnvJWTSecret = "AUTHCENTER_JWT_SECRET"
+	// EnvKeyEncKey F-021 密钥存储加密主密钥（base64(32B)）。
+	// 只来自环境变量：不入库、不落盘、不进日志/审计（need01 03 §4.2/§4.8）。
+	EnvKeyEncKey = "AUTHCENTER_KEY_ENC_KEY"
 )
 
 // Config 汇总运行配置。
@@ -28,6 +31,7 @@ type Config struct {
 	LogFormat   string // text/json
 	WebDir      string // 开发模式：从磁盘目录服务前端静态文件；空=不启用
 	JWTSecret   string // 来自 env AUTHCENTER_JWT_SECRET，可覆盖 settings 中自动生成值
+	KeyEncKey   string // 来自 env AUTHCENTER_KEY_ENC_KEY，base64(32B)；空=明文模式
 	MigrateOnly bool   // 只做迁移与自检后退出，不监听端口（need01 06 §3.4）
 }
 
@@ -52,6 +56,7 @@ func Parse(args []string) (*Config, error) {
 	}
 
 	cfg.JWTSecret = os.Getenv(EnvJWTSecret)
+	cfg.KeyEncKey = os.Getenv(EnvKeyEncKey)
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

@@ -121,22 +121,42 @@ func run() error {
 		return err
 	}
 
+	// 7.2 F-021 密钥存储加密装配：主密钥只来自 env AUTHCENTER_KEY_ENC_KEY（缺失即明文模式）。
+	keyCipher, err := service.NewCipherFromEnv(cfg.KeyEncKey)
+	if err != nil {
+		// 主密钥长度非法：写自检失败审计后退出（绝不静默降级为明文模式）。
+		writeSystemAudit(st, &model.AuditLog{
+			EventTime: database.NowUTC(), EventType: model.EventSystemKeyEncryptionVerifyFailed,
+			ActorType: model.ActorTypeSystem, ActorName: "authcenter",
+			TargetType: model.TargetTypeSystem, Result: model.ResultFailure,
+			Detail: `{"reason":"bad_key_length"}`,
+		})
+		return err
+	}
+	// 仅状态自检（不含数据回填；回填由后台 job 承担，need01 06 §4）。
+	if err := ensureKeyEncryptionReady(auditCtx, st, keyCipher, logger); err != nil {
+		return err
+	}
+
 	// 7.5 初始化 service 层（文档 02 §6 第 4 步：M2 会话/项目/密钥/审计；M3 令牌/认证；M4 统计）。
 	auditSvc := service.NewAuditService(st, logger)
 	sessionSvc := service.NewSessionService(st, logger)
 	projectSvc := service.NewProjectService(st, auditSvc)
 	graceDays := loadRotateGraceDays(auditCtx, st)
-	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, graceDays)
+	apikeySvc := service.NewApiKeyService(st, auditSvc, projectSvc, graceDays, keyCipher)
 	tokenSvc, err := service.NewTokenService(auditCtx, st)
 	if err != nil {
 		return err
 	}
-	authSvc := service.NewAuthService(auditCtx, st, auditSvc, tokenSvc, logger)
+	authSvc := service.NewAuthService(auditCtx, st, auditSvc, tokenSvc, logger, apikeySvc)
 	statsSvc := service.NewStatsService(st)
 	// M7：审计保留策略后台任务（settings.audit_retention_days，默认 90 天，0=永久保留）。
 	retentionSvc := service.NewAuditRetentionService(st, auditSvc, logger)
 	retentionSvc.SyncInterval(auditCtx)
-	settingsSvc := service.NewSettingsService(st, auditSvc, logger)
+	settingsSvc := service.NewSettingsServiceWithCipher(st, auditSvc, logger, keyCipher)
+	// F-021：key_hash 存量回填后台任务（Interval=0，启动后异步触发一次）。
+	backfillSvc := service.NewKeyHashBackfillService(st, auditSvc, logger)
+	backfillSvc.SetOnDone(apikeySvc.InvalidateBackfillCache)
 	// M9：F-020 多管理员与 RBAC 的账号管理服务（owner 可增/停/启/改角色/重置密码）。
 	// owner 回填不在此处调用——由迁移 step admin_user_role 承担（need01 02 §3.2/§4.7）。
 	adminUserSvc := service.NewAdminUserService(st, auditSvc, logger)
@@ -152,7 +172,14 @@ func run() error {
 	defer stop()
 	maint := service.NewMaintenanceRunner(st, auditSvc, logger)
 	maint.Register(retentionSvc)
+	maint.Register(backfillSvc)
 	maint.Start(ctx)
+	// F-021：异步触发一次 key_hash 回填，不阻塞 HTTP 启动（need01 03 §4.7）。
+	go func() {
+		if _, err := maint.RunNow(ctx, "key_hash_backfill"); err != nil && !errors.Is(err, service.ErrJobRunning) {
+			logger.Error("key_hash 回填任务失败", "err", err)
+		}
+	}()
 	defer maint.Stop()
 	server := &http.Server{
 		Addr: cfg.Listen,
@@ -274,4 +301,73 @@ func writeSystemAudit(st *store.Store, e *model.AuditLog) {
 	if err := st.InsertAudit(context.Background(), e); err != nil {
 		slog.Error("写入系统审计失败", "err", err, "event_type", e.EventType)
 	}
+}
+
+// ensureKeyEncryptionReady F-021 启动自检（全部幂等，不含数据回填；need01 03 §4.7）：
+//  1. key_encryption_enabled=1 但未提供主密钥 → 报错退出（绝不带病启动）；
+//  2. 库中存在密文行但未提供主密钥 → 报错退出（mixed_mode）；
+//  3. 有密文时用主密钥自检密文验证其可用性；失败 → 写审计 + 报错退出；
+//  4. 初始化 key_hash_backfill_state（缺失则写 pending；已完成过则保持 done）；
+//  5. 全部通过 → 记 Info（只说条数与校验结论，绝不打任何密钥内容）。
+func ensureKeyEncryptionReady(ctx context.Context, st *store.Store, c service.Cipher, logger *slog.Logger) error {
+	writeVerifyFailed := func(reason string) {
+		writeSystemAudit(st, &model.AuditLog{
+			EventTime: database.NowUTC(), EventType: model.EventSystemKeyEncryptionVerifyFailed,
+			ActorType: model.ActorTypeSystem, ActorName: "authcenter",
+			TargetType: model.TargetTypeSystem, Result: model.ResultFailure,
+			Detail: fmt.Sprintf(`{"reason":%q}`, reason),
+		})
+	}
+	enabled, err := st.GetSetting(ctx, model.SettingKeyEncryptionEnabled)
+	if err != nil {
+		return err
+	}
+	encCount, err := st.CountEncrypted(ctx)
+	if err != nil {
+		return err
+	}
+	plainCount, err := st.CountPlain(ctx)
+	if err != nil {
+		return err
+	}
+	if enabled == "1" && !c.Enabled() {
+		writeVerifyFailed("missing_master_key")
+		return errors.New("已启用密钥加密但未提供 AUTHCENTER_KEY_ENC_KEY（拒绝以明文模式启动）")
+	}
+	if encCount > 0 && !c.Enabled() {
+		writeVerifyFailed("mixed_mode")
+		return fmt.Errorf("库中存在 %d 条密文密钥但未提供 AUTHCENTER_KEY_ENC_KEY，无法启动", encCount)
+	}
+	if c.Enabled() {
+		// 自检密文同步 + 主密钥校验：
+		//   库中已有密文（encCount>0）→ 必须解得开，否则 fail-fast；
+		//   库中无密文 → 主密钥变更不算错误，按当前主密钥重写自检密文（自愈，不锁死服务）。
+		if err := service.SyncKeyEncCheckBlob(ctx, st, c, encCount > 0); err != nil {
+			if errors.Is(err, service.ErrCipherDecrypt) {
+				writeVerifyFailed("decrypt_failed")
+				return errors.New("主密钥校验失败：无法解开库中自检密文（AUTHCENTER_KEY_ENC_KEY 与库不匹配）")
+			}
+			return err
+		}
+	}
+	// 初始化回填状态：缺失则 pending；已完成过则保持 done（幂等，重启不重复回填）。
+	state, err := st.GetSetting(ctx, model.SettingKeyHashBackfillState)
+	if err != nil {
+		return err
+	}
+	if state == "" {
+		if err := st.SetSetting(ctx, model.SettingKeyHashBackfillState, model.BackfillPending); err != nil {
+			return err
+		}
+		state = model.BackfillPending
+	}
+	if encCount > 0 {
+		logger.Info("主密钥已加载且校验通过", "encrypted_keys", encCount, "plaintext_keys", plainCount)
+	} else if c.Enabled() {
+		logger.Info("主密钥已加载，当前库中暂无密文密钥", "plaintext_keys", plainCount)
+	} else {
+		logger.Info("未配置主密钥，密钥以明文存储（可设置 AUTHCENTER_KEY_ENC_KEY 启用加密）",
+			"plaintext_keys", plainCount)
+	}
+	return nil
 }
