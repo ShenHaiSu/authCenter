@@ -105,6 +105,9 @@ const EVENT_TYPE_LABELS = {
    'auth.authenticate_failed': '外部认证失败',
    'system.audit_cleanup': '审计清理',
    'settings.update': '更新设置',
+  'system.schema_migrated': '数据库结构升级',
+  'system.key_encryption_migrated': '密钥加密迁移',
+  'system.key_encryption_verify_failed': '密钥加密自检失败',
  };
 
 function eventTypeLabel(t) {
