@@ -185,8 +185,49 @@ resp: { "projects": n, "active_keys": n, "expiring_keys_7d": n, "auth_today": {t
 | DELETE /keys/{id} | key.delete | — |
 | 启动/关闭 | system.startup / system.shutdown | — |
 | admin 初始化 | system.admin_initialized | — |
+| 密钥加密迁移（hash 回填 / 启用加密） | system.key_encryption_migrated | — |
+| 密钥加密启动自检失败 | — | system.key_encryption_verify_failed |
+| 审计清理 | system.audit_cleanup | — |
+| 修改设置 | settings.update | — |
 
-## 6. 前端页面 → API 映射（速查）
+## 6. 系统设置 API（F-019 审计保留策略 / F-021 密钥存储加密）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/settings` | 白名单设置项 + 审计用量 + 密钥加密状态（**永不返回 jwt_secret 与主密钥**） |
+| PUT | `/api/v1/settings` | 更新保留策略（`audit_retention_days` / `audit_cleanup_interval_hours` / `audit_min_keep_rows`） |
+| POST | `/api/v1/settings/audit/cleanup-now` | 手动立即执行一轮审计清理 |
+| POST | `/api/v1/settings/audit/checkpoint` | 回收 WAL 空间 |
+| POST | `/api/v1/settings/key-encryption/enable` | **F-021 启用密钥存储加密**（破坏性，需二次确认；无 disable） |
+
+`GET /api/v1/settings` 中与 F-021 相关的响应片段：
+
+```jsonc
+"settings": {
+  "key_encryption_enabled": true,
+  "key_encryption_version": "aes-256-gcm-v1",
+  "key_encrypted_count": 12,
+  "key_hash_backfill_state": "done"
+},
+"key_encryption": {
+  "master_key_configured": true,   // 仅布尔，绝不返回密钥或其哈希
+  "mode": "encrypted",             // encrypted | plaintext
+  "encrypted_count": 12,
+  "total_keys": 15,
+  "pending_hash_rows": 0
+}
+```
+
+`POST /api/v1/settings/key-encryption/enable`：
+
+| 情况 | 响应 |
+|------|------|
+| env 未提供主密钥 | 409 / 20202「未配置 AUTHCENTER_KEY_ENC_KEY，无法启用加密」 |
+| 已是加密模式 | 409 / 20202「密钥存储已处于加密模式」 |
+| `key_hash` 回填未完成 | 409 / 20202「存在 N 行尚未回填 key_hash…」 |
+| 成功 | 200 `{ "encrypted_rows": N, "duration_ms": M, "mode": "encrypted" }` + 审计 `system.key_encryption_migrated` |
+
+## 7. 前端页面 → API 映射（速查）
 
 | 页面 | 调用 API |
 |------|----------|
@@ -196,3 +237,4 @@ resp: { "projects": n, "active_keys": n, "expiring_keys_7d": n, "auth_today": {t
 | 密钥管理 | GET /projects/{id}/keys；POST /projects/{id}/keys；PUT /keys/{id}；POST /keys/{id}/rotate；DELETE /keys/{id} |
 | 审计日志 | GET /audit-logs |
 | 修改密码 | PUT /admin/password |
+| 系统设置 | GET/PUT /settings；POST /settings/audit/cleanup-now；POST /settings/key-encryption/enable |

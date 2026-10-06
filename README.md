@@ -62,7 +62,33 @@ go test -bench . -benchtime 1s ./internal/...   # 性能冒烟（08 §6）
 | `-log-format` | `text` | text/json |
 | `-web-dir` | 空（内嵌） | 开发模式：从磁盘目录服务前端 |
 
-环境变量：`AUTHCENTER_JWT_SECRET`（覆盖 JWT secret，备份恢复场景必需）。
+环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `AUTHCENTER_JWT_SECRET` | 覆盖 JWT secret（备份恢复场景必需） |
+| `AUTHCENTER_KEY_ENC_KEY` | **F-021 密钥存储加密主密钥**，`base64(32B)`；不设置则密钥以明文存储 |
+
+主密钥生成（只保存在密码管理器 / `EnvironmentFile`，不入库、不落盘、不进日志）：
+
+```bash
+# Linux / macOS
+export AUTHCENTER_KEY_ENC_KEY=$(head -c 32 /dev/urandom | base64)
+# Windows PowerShell
+$env:AUTHCENTER_KEY_ENC_KEY = [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+```
+
+> ⚠️ 启用密钥加密后，**主密钥丢失 = 全部项目密钥不可恢复**；回滚只能用「启用前的数据库备份」，
+> 换回旧二进制无法读取密文库。详见 `Documents/need01/03-F021-密钥存储加密.md`。
+
+## 密钥存储加密（F-021）
+
+- 配置 `AUTHCENTER_KEY_ENC_KEY` 后：新生成的密钥以 **AES-256-GCM** 密文落盘
+  （`api_key.key_value` 存 `base64(nonce‖ct‖tag)`，`key_value_enc=1`），客户端无感知（仍用原 40 位明文调用认证）。
+- 认证主路径改为按 `hex(SHA-256(明文密钥))` 走 `key_hash` 唯一索引等值查询；存量行由后台任务分批回填。
+- 启动自检（fail-fast）：`key_encryption_enabled=1` 而无主密钥、或主密钥与库中密文不匹配 → **拒绝启动**并写
+  `system.key_encryption_verify_failed` 审计。
+- 管理界面「系统设置 → 密钥存储加密」提供**启用**（破坏性操作，需二次确认）；**不提供关闭**（单向棘轮）。
 
 ## 设计文档
 

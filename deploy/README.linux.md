@@ -41,6 +41,30 @@ journalctl -u authcenter -f   # 首次启动日志含 admin 密码
 - 升级：停服 → 替换 `authcenter`（data 目录不动）→ 启动（自动迁移建表）→
   验证 `GET /api/v1/admin/me`。
 
+## 密钥存储加密（F-021，可选）
+
+```bash
+# 1. 生成 32 字节主密钥（base64），务必另存到密码管理器
+head -c 32 /dev/urandom | base64
+
+# 2. 写入 systemd 环境文件（仅 root 可读）
+sudo install -m 600 /dev/null /etc/authcenter.env
+echo 'AUTHCENTER_KEY_ENC_KEY=<上一步的 base64>' | sudo tee /etc/authcenter.env
+
+# 3. authcenter.service 中取消注释 EnvironmentFile：
+#    EnvironmentFile=/etc/authcenter.env
+
+sudo systemctl daemon-reload && sudo systemctl restart authcenter
+journalctl -u authcenter -n 20     # 应出现「主密钥已加载，当前库中暂无密文密钥」
+```
+
+- 配置主密钥后，**新生成**的密钥即以 AES-256-GCM 密文落盘；把存量明文密钥一次性转换为密文，
+  在管理界面「系统设置 → 密钥存储加密 → 启用密钥加密」（破坏性操作，需二次确认）。
+- 存量 `key_hash` 回填由后台任务自动完成（不阻塞启动），界面可查看回填状态。
+- **主密钥丢失 = 全部项目密钥不可恢复**；启动自检发现主密钥不匹配会直接拒绝启动（fail-fast）。
+- **回滚只能用「启用加密前的数据库备份」**（连同 `data/` 下的 WAL/SHM 三件套），
+  换回旧二进制无法正确读取密文库。备份/回滚步骤见 `Documents/need01/05-公共附录.md` §5。
+
 ## 安全提示
 
 - 仅监听 `127.0.0.1:53779`（HTTP）；对外 HTTPS 一律用 Caddy 反代

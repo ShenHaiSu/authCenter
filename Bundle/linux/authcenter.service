@@ -6,6 +6,11 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now authcenter
 #
+# F-021 密钥存储加密（可选）：主密钥只走环境变量，绝不写进本单元文件或数据库。
+# 1) head -c 32 /dev/urandom | base64  →  写入 /etc/authcenter.env（chmod 600）
+# 2) 取消下面 EnvironmentFile 的注释后 daemon-reload + restart
+# EnvironmentFile=/etc/authcenter.env
+#
 # 查看日志（含首次启动的 admin 初始密码，见 data/auth.log）：
 #   journalctl -u authcenter -f
 # ============================================================================
